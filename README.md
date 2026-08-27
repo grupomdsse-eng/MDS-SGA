@@ -11,14 +11,18 @@ Proyecto Android nativo para gestión de almacén, lectura OCR de albaranes y pi
 - Fotografía de un albarán con la cámara del dispositivo.
 - OCR local mediante **Google ML Kit Text Recognition**.
 - Detección automática de:
-  - número de albarán;
+  - número de albarán **situado visualmente justo debajo de la palabra ALBARÁN**;
   - cliente (si se reconoce);
   - referencia de la columna **ARTÍCULO**;
   - descripción;
   - cantidad de la columna **CANTIDAD**.
-- Parser reforzado con coordenadas OCR: intenta usar físicamente las columnas ARTÍCULO y CANTIDAD, no solo texto plano.
+- Parser reforzado con coordenadas OCR: la referencia se acepta **solo desde la columna situada debajo de ARTÍCULO** y la cantidad desde **CANTIDAD** cuando esas cabeceras son reconocidas.
 - Pantalla de revisión manual antes de guardar el albarán.
 - Picking con cámara usando **CameraX + ML Kit Barcode Scanning**.
+- Escáner estabilizado: una etiqueta quieta no genera lecturas repetidas en bucle; para volver a contar el mismo EAN hay que retirarlo del encuadre y mostrarlo de nuevo.
+- Las lecturas de código se serializan para evitar colas de operaciones y bloqueos tras un uso prolongado.
+- OCR fuera del hilo de interfaz y con tiempo máximo de lectura para evitar que una foto problemática congele la aplicación.
+- Limpieza automática de fotos temporales antiguas para limitar el crecimiento de la caché.
 - Cada lectura correcta añade una unidad picada.
 - Rechaza productos que no pertenezcan al albarán.
 - Impide picar más unidades de las indicadas.
@@ -41,6 +45,14 @@ El parser incluye pruebas para el formato aportado:
 - Cantidad: `4`
 
 La aplicación **siempre muestra una pantalla de revisión** antes de crear el picking. Un OCR nunca debe descontar stock directamente sin confirmación.
+
+### Reglas OCR de este formato
+
+1. La palabra `ALBARÁN` se localiza por posición en la imagen.
+2. Se toma como número el valor numérico alineado y más próximo **debajo** de esa palabra.
+3. Se localiza la cabecera `ARTÍCULO`.
+4. Las referencias solo se extraen de la zona vertical que nace debajo de esa cabecera; no se buscan referencias por el resto de la hoja.
+5. La cantidad se cruza por fila con la columna `CANTIDAD`.
 
 ## Importar el Excel de productos
 
