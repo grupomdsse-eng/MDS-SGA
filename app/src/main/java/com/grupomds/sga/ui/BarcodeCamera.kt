@@ -95,7 +95,7 @@ fun BarcodeCamera(
                 .border(3.dp, MaterialTheme.colorScheme.secondary, RoundedCornerShape(14.dp))
         )
         Text(
-            text = if (enabled) "Coloca el código dentro del recuadro" else "Picking completo",
+            text = if (enabled) "Coloca el código dentro del recuadro" else "Procesando / picking completo",
             color = Color.White,
             modifier = Modifier
                 .align(Alignment.BottomCenter)
@@ -116,8 +116,12 @@ private fun CameraPreview(
     val lifecycleOwner = LocalLifecycleOwner.current
     val executor = remember { Executors.newSingleThreadExecutor() }
     val processing = remember { AtomicBoolean(false) }
-    val lastCode = remember { AtomicReference("") }
-    val lastAt = remember { AtomicLong(0L) }
+    val disposed = remember { AtomicBoolean(false) }
+    val lockedCode = remember { AtomicReference<String?>(null) }
+    val lastBarcodeSeenAt = remember { AtomicLong(0L) }
+    val providerRef = remember { AtomicReference<ProcessCameraProvider?>(null) }
+    val analysisRef = remember { AtomicReference<ImageAnalysis?>(null) }
+    val previewRef = remember { AtomicReference<Preview?>(null) }
     val enabledState = rememberUpdatedState(enabled)
     val onBarcodeState = rememberUpdatedState(onBarcode)
 
@@ -139,8 +143,17 @@ private fun CameraPreview(
 
     DisposableEffect(Unit) {
         onDispose {
-            scanner.close()
-            executor.shutdown()
+            disposed.set(true)
+            val analysis = analysisRef.getAndSet(null)
+            val preview = previewRef.getAndSet(null)
+            analysis?.clearAnalyzer()
+            providerRef.getAndSet(null)?.let { provider ->
+                analysis?.let { provider.unbind(it) }
+                preview?.let { provider.unbind(it) }
+            }
+            processing.set(false)
+            runCatching { scanner.close() }
+            executor.shutdownNow()
         }
     }
 
@@ -154,8 +167,13 @@ private fun CameraPreview(
 
             val providerFuture = ProcessCameraProvider.getInstance(androidContext)
             providerFuture.addListener({
+                if (disposed.get()) return@addListener
+
                 runCatching {
                     val provider = providerFuture.get()
+                    if (disposed.get()) return@runCatching
+
+                    providerRef.set(provider)
                     val preview = Preview.Builder().build().also { cameraPreview ->
                         cameraPreview.setSurfaceProvider(previewView.surfaceProvider)
                     }
@@ -163,8 +181,11 @@ private fun CameraPreview(
                         .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
                         .build()
 
+                    previewRef.set(preview)
+                    analysisRef.set(analysis)
+
                     analysis.setAnalyzer(executor) { imageProxy ->
-                        if (!enabledState.value || processing.getAndSet(true)) {
+                        if (disposed.get() || !enabledState.value || !processing.compareAndSet(false, true)) {
                             imageProxy.close()
                             return@setAnalyzer
                         }
@@ -179,17 +200,22 @@ private fun CameraPreview(
                         val input = InputImage.fromMediaImage(mediaImage, imageProxy.imageInfo.rotationDegrees)
                         scanner.process(input)
                             .addOnSuccessListener { barcodes ->
-                                val rawValue = barcodes.firstNotNullOfOrNull { it.rawValue }
-                                if (!rawValue.isNullOrBlank()) {
-                                    val now = SystemClock.elapsedRealtime()
-                                    val previousCode = lastCode.get()
-                                    val previousSeenAt = lastAt.getAndSet(now)
-                                    lastCode.set(rawValue)
+                                if (disposed.get()) return@addOnSuccessListener
 
-                                    // The same printed barcode must disappear from the camera before
-                                    // it can be counted again. This prevents one stationary label
-                                    // from adding several units automatically.
-                                    if (rawValue != previousCode || now - previousSeenAt >= 800L) {
+                                val now = SystemClock.elapsedRealtime()
+                                val rawValue = barcodes.firstNotNullOfOrNull { it.rawValue?.trim()?.takeIf(String::isNotBlank) }
+
+                                if (rawValue == null) {
+                                    // El mismo artículo solo puede volver a contarse después de
+                                    // retirar físicamente su código del encuadre durante un instante.
+                                    if (now - lastBarcodeSeenAt.get() >= 650L) {
+                                        lockedCode.set(null)
+                                    }
+                                } else {
+                                    lastBarcodeSeenAt.set(now)
+                                    val previous = lockedCode.get()
+                                    if (previous == null || previous != rawValue) {
+                                        lockedCode.set(rawValue)
                                         onBarcodeState.value(rawValue)
                                     }
                                 }

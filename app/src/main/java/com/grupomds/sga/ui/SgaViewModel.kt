@@ -20,12 +20,17 @@ import com.grupomds.sga.ocr.ParsedDeliveryNote
 import com.grupomds.sga.ocr.ParsedLine
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.suspendCancellableCoroutine
 
 class SgaViewModel(application: Application) : AndroidViewModel(application) {
@@ -52,6 +57,10 @@ class SgaViewModel(application: Application) : AndroidViewModel(application) {
     private val _scanMessage = MutableStateFlow<Pair<Boolean, String>?>(null)
     val scanMessage = _scanMessage.asStateFlow()
 
+    private val _scanBusy = MutableStateFlow(false)
+    val scanBusy = _scanBusy.asStateFlow()
+    private val scanMutex = Mutex()
+
     private val _operationMessage = MutableStateFlow<String?>(null)
     val operationMessage = _operationMessage.asStateFlow()
 
@@ -68,50 +77,65 @@ class SgaViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun scanDeliveryNote(uri: Uri, onDone: () -> Unit) {
+        if (_ocrBusy.value) return
+
         viewModelScope.launch {
             _ocrBusy.value = true
             _ocrError.value = null
             val recognizer = TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
             try {
                 val app = getApplication<Application>()
-                val image = InputImage.fromFilePath(app, uri)
-                val result = suspendCancellableCoroutine { continuation ->
-                    recognizer.process(image)
-                        .addOnSuccessListener { text ->
-                            if (continuation.isActive) continuation.resume(text)
-                        }
-                        .addOnFailureListener { error ->
-                            if (continuation.isActive) continuation.resumeWithException(error)
-                        }
+
+                // La carga de una foto grande puede tardar y no debe bloquear el hilo de interfaz.
+                val image = withContext(Dispatchers.IO) {
+                    InputImage.fromFilePath(app, uri)
                 }
 
-                val tokens = result.textBlocks.flatMap { block ->
-                    block.lines.flatMap { line ->
-                        line.elements.mapNotNull { element ->
-                            element.boundingBox?.let { box ->
-                                OcrToken(
-                                    text = element.text,
-                                    left = box.left,
-                                    top = box.top,
-                                    right = box.right,
-                                    bottom = box.bottom
-                                )
+                val result = withTimeout(25_000L) {
+                    suspendCancellableCoroutine { continuation ->
+                        recognizer.process(image)
+                            .addOnSuccessListener { text ->
+                                if (continuation.isActive) continuation.resume(text)
                             }
-                        }
+                            .addOnFailureListener { error ->
+                                if (continuation.isActive) continuation.resumeWithException(error)
+                            }
                     }
                 }
 
-                val parsed = DeliveryNoteParser.parse(
-                    rawText = result.text,
-                    products = repo.allProducts(),
-                    tokens = tokens
-                )
+                val productsSnapshot = repo.allProducts()
+                val parsed = withContext(Dispatchers.Default) {
+                    val tokens = result.textBlocks.flatMap { block ->
+                        block.lines.flatMap { line ->
+                            line.elements.mapNotNull { element ->
+                                element.boundingBox?.let { box ->
+                                    OcrToken(
+                                        text = element.text,
+                                        left = box.left,
+                                        top = box.top,
+                                        right = box.right,
+                                        bottom = box.bottom
+                                    )
+                                }
+                            }
+                        }
+                    }
+
+                    DeliveryNoteParser.parse(
+                        rawText = result.text,
+                        products = productsSnapshot,
+                        tokens = tokens
+                    )
+                }
+
                 _draft.value = parsed
                 onDone()
+            } catch (_: TimeoutCancellationException) {
+                _ocrError.value = "La lectura ha tardado demasiado. Haz otra foto con el albarán centrado y bien enfocado."
             } catch (error: Throwable) {
                 _ocrError.value = error.message ?: "No se pudo leer el albarán"
             } finally {
-                recognizer.close()
+                runCatching { recognizer.close() }
                 _ocrBusy.value = false
             }
         }
@@ -181,14 +205,26 @@ class SgaViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun submitBarcode(noteId: Long, barcode: String) {
-        if (barcode.isBlank()) return
+        val cleanBarcode = barcode.trim()
+        if (cleanBarcode.isBlank()) return
+
         viewModelScope.launch {
-            _scanMessage.value = null
-            when (val result = repo.recordScan(noteId, barcode)) {
-                is ScanResult.Accepted -> _scanMessage.value = true to result.message
-                is ScanResult.Rejected -> _scanMessage.value = false to result.message
+            // Evita una cola creciente de lecturas si la cámara sigue viendo el mismo código.
+            if (!scanMutex.tryLock()) return@launch
+            _scanBusy.value = true
+            try {
+                _scanMessage.value = null
+                when (val result = repo.recordScan(noteId, cleanBarcode)) {
+                    is ScanResult.Accepted -> _scanMessage.value = true to result.message
+                    is ScanResult.Rejected -> _scanMessage.value = false to result.message
+                }
+                _picking.value = repo.pickingSnapshot(noteId)
+            } catch (error: Throwable) {
+                _scanMessage.value = false to (error.message ?: "No se pudo registrar la lectura")
+            } finally {
+                _scanBusy.value = false
+                scanMutex.unlock()
             }
-            _picking.value = repo.pickingSnapshot(noteId)
         }
     }
 

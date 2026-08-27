@@ -93,4 +93,59 @@ class DeliveryNoteParserTest {
         assertEquals(4, result.lines.single().quantity)
         assertTrue(result.lines.single().matchedProduct)
     }
+
+
+    @Test
+    fun spatialNoteNumberUsesOnlyNumberDirectlyBelowAlbaran() {
+        val tokens = listOf(
+            OcrToken("ALBARÁN", 620, 80, 760, 115),
+            OcrToken("300712", 630, 125, 745, 160),
+            OcrToken("274", 350, 455, 390, 480),
+            OcrToken("B91255679", 450, 455, 560, 480),
+            OcrToken("3-000550", 260, 525, 350, 550)
+        )
+
+        val result = DeliveryNoteParser.parse(
+            rawText = "ALBARÁN\n274\nB91255679\n300712",
+            products = emptyList(),
+            tokens = tokens
+        )
+
+        assertEquals("300712", result.number)
+    }
+
+    @Test
+    fun spatialReferencesAreTakenOnlyFromArticleColumn() {
+        val products = listOf(
+            ProductEntity(
+                reference = "MTP11301N",
+                ean = "8430000000001",
+                description = "Matricula Acrilica (52x11)",
+                stock = 100
+            )
+        )
+        val tokens = listOf(
+            OcrToken("ARTÍCULO", 50, 500, 145, 525),
+            OcrToken("DESCRIPCIÓN", 205, 500, 340, 525),
+            OcrToken("CANTIDAD", 480, 500, 575, 525),
+            OcrToken("PRECIO", 610, 500, 680, 525),
+            // Distractor outside the ARTÍCULO column.
+            OcrToken("ZZZ99999", 300, 545, 390, 570),
+            OcrToken("MTP11301N", 50, 590, 155, 615),
+            OcrToken("Matricula", 205, 590, 285, 615),
+            OcrToken("Acrilica", 290, 590, 350, 615),
+            OcrToken("4,00", 500, 590, 545, 615)
+        )
+
+        val result = DeliveryNoteParser.parse(
+            rawText = "ARTÍCULO DESCRIPCIÓN CANTIDAD\nZZZ99999\nMTP11301N Matricula Acrilica 4,00",
+            products = products,
+            tokens = tokens
+        )
+
+        assertEquals(1, result.lines.size)
+        assertEquals("MTP11301N", result.lines.single().reference)
+        assertEquals(4, result.lines.single().quantity)
+    }
+
 }

@@ -492,7 +492,7 @@ private fun ScanDeliveryNoteScreen(vm: SgaViewModel, nav: NavHostController) {
             fontWeight = FontWeight.Bold
         )
         Text(
-            "La app busca automáticamente el número de albarán y, en la tabla, la referencia de ARTÍCULO, la descripción y la CANTIDAD. Antes del picking puedes corregir cualquier dato."
+            "La app toma el número situado justo debajo de ALBARÁN. Las referencias se leen únicamente de la columna situada debajo de ARTÍCULO y la cantidad de su columna CANTIDAD. Antes del picking puedes corregir cualquier dato."
         )
 
         Button(
@@ -536,6 +536,17 @@ private fun ScanDeliveryNoteScreen(vm: SgaViewModel, nav: NavHostController) {
 
 private fun createPhotoUri(context: Context): Uri {
     val directory = File(context.cacheDir, "delivery_notes").apply { mkdirs() }
+
+    // Las fotos solo sirven para el OCR. Limitamos la caché para que una jornada con muchos
+    // albaranes no acumule cientos de imágenes de cámara.
+    runCatching {
+        directory.listFiles()
+            ?.filter { it.isFile && it.name.startsWith("albaran_") }
+            ?.sortedByDescending { it.lastModified() }
+            ?.drop(8)
+            ?.forEach { it.delete() }
+    }
+
     val file = File(directory, "albaran_${System.currentTimeMillis()}.jpg")
     return FileProvider.getUriForFile(
         context,
@@ -683,6 +694,7 @@ private fun PickingScreen(
 ) {
     val snapshot by vm.picking.collectAsStateWithLifecycle()
     val scanMessage by vm.scanMessage.collectAsStateWithLifecycle()
+    val scanBusy by vm.scanBusy.collectAsStateWithLifecycle()
     var manualBarcode by remember(noteId) { mutableStateOf("") }
 
     LaunchedEffect(noteId) {
@@ -756,17 +768,29 @@ private fun PickingScreen(
             item {
                 Text("Escáner de productos", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
                 Text(
-                    "Cada lectura suma una unidad. Si el código no pertenece al albarán o la cantidad ya está completa, se rechaza y queda registrado.",
+                    "Cada lectura suma una unidad. Para dos unidades con el mismo EAN, retira el código del recuadro y vuelve a mostrar el siguiente producto. Si no pertenece al albarán o la cantidad ya está completa, se rechaza y queda registrado.",
                     style = MaterialTheme.typography.bodySmall
                 )
             }
 
             item {
                 BarcodeCamera(
-                    enabled = !pickingDone,
+                    enabled = !pickingDone && !scanBusy,
                     onBarcode = { code -> vm.submitBarcode(noteId, code) },
                     modifier = Modifier.fillMaxWidth().height(280.dp)
                 )
+            }
+
+            if (scanBusy) {
+                item {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
+                        Text("Registrando lectura…", style = MaterialTheme.typography.bodySmall)
+                    }
+                }
             }
 
             item {
@@ -782,7 +806,7 @@ private fun PickingScreen(
                         singleLine = true
                     )
                     FilledTonalButton(
-                        enabled = manualBarcode.isNotBlank(),
+                        enabled = manualBarcode.isNotBlank() && !scanBusy,
                         onClick = {
                             vm.submitBarcode(noteId, manualBarcode)
                             manualBarcode = ""
@@ -838,7 +862,7 @@ private fun PickingScreen(
                             }
                         }
                     },
-                    enabled = pickingDone,
+                    enabled = pickingDone && !scanBusy,
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     Text("Finalizar albarán y descontar stock")
