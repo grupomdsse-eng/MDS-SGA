@@ -1,43 +1,60 @@
-SGA MDS - VERSION 1.2.0 ESTABLE - LISTA PARA GITHUB
-====================================================
+SGA MDS - VERSION 1.3.0 - GOOGLE SHEETS + PICKING + TRANSPORTE
+===============================================================
 
-CAMBIOS IMPORTANTES DE ESTA VERSION
------------------------------------
-1) El numero de albaran se obtiene por POSICION:
-   - busca la palabra ALBARAN en la parte superior;
-   - toma el numero alineado que esta justo debajo;
-   - evita confundirlo con N cliente, CIF, pedido u otros numeros.
+NOVEDADES PRINCIPALES
+---------------------
+1) STOCK Y EAN DESDE GOOGLE SHEETS
+   Hoja configurada:
+   https://docs.google.com/spreadsheets/d/1HmU9IPRGRWte1iXxUvYaoBc4jEmvNncHvMviI2Ggt3c/edit?gid=0#gid=0
 
-2) La referencia se obtiene por COLUMNA:
-   - localiza la cabecera ARTICULO;
-   - solo acepta referencias situadas debajo de esa columna;
-   - no busca referencias por el resto del documento.
+   La app sincroniza automaticamente al abrir y tambien dispone de boton SINCRONIZAR.
+   Reconoce columnas CÓDIGO/REFERENCIA/ARTÍCULO, EAN, DESCRIPCIÓN, STOCK y UBICACIÓN.
 
-3) La cantidad se cruza con la columna CANTIDAD de la misma fila.
+   IMPORTANTE: para descarga directa sin login, la hoja debe permitir lectura mediante enlace.
 
-4) Estabilidad reforzada:
-   - el mismo codigo de barras quieto no se registra una y otra vez;
-   - las lecturas se procesan de una en una, sin crear colas;
-   - la camara libera analizador, recursos y executor al salir;
-   - el OCR no bloquea el hilo de interfaz y tiene timeout de seguridad;
-   - se limita la acumulacion de fotos temporales.
+2) RELACION CODIGO -> EAN
+   - En el albaran se lee el CÓDIGO situado debajo de ARTÍCULO.
+   - Ese CÓDIGO se busca en el maestro de Google Sheets.
+   - La app obtiene el EAN del producto.
+   - En picking SOLO acepta el EAN relacionado con ese CÓDIGO.
+   - Ya no se autoasignan EAN desconocidos durante el picking.
+
+3) UNIDADES MANUALES DESPUES DE ESCANEAR
+   - Escanea el EAN.
+   - Se abre una ventana con producto, EAN, picado y pendientes.
+   - Introduce 1, 2, 3... unidades.
+   - Nunca permite superar la cantidad del albaran.
+
+4) ETIQUETAS DE TRANSPORTE OBLIGATORIAS
+   - Al completar los productos aparece automaticamente el escaner de transporte.
+   - Permite registrar varias etiquetas.
+   - Evita duplicados.
+   - No deja finalizar el albaran hasta registrar al menos una etiqueta.
+   - Las etiquetas quedan guardadas con el albaran.
+
+5) OCR DEL ALBARAN
+   - Numero: valor situado debajo de ALBARÁN.
+   - Referencia: solo valores de la columna situada debajo de ARTÍCULO.
+   - Cantidad: columna CANTIDAD de la misma fila.
+
+6) ESTABILIDAD
+   - CameraX usa KEEP_ONLY_LATEST.
+   - Un codigo quieto no crea lecturas infinitas.
+   - Operaciones de lectura serializadas con Mutex.
+   - Camera, scanner y executor se liberan al salir.
+   - OCR con timeout y fuera del hilo de interfaz.
+   - Migracion Room 1 -> 2 sin borrar historial.
 
 PARA SUBIR A GITHUB
 -------------------
-1) NO subas este ZIP como un unico archivo a GitHub.
-2) Extrae el ZIP completo.
-3) Abre la carpeta SGA_MDS_GitHub_Ready_v2.
-4) Comprueba que ves: .github, app, gradle, docs y sample.
-5) Ejecuta SUBIR_A_GITHUB.bat o usa GitHub Desktop.
-
-PARA GENERAR EL APK
--------------------
-GitHub -> Actions -> Build Android APK -> Run workflow.
-Al finalizar descarga el artefacto SGA-MDS-debug-apk.
+1) Extrae el ZIP completo.
+2) NO subas el ZIP como un unico archivo.
+3) Abre la carpeta extraida y comprueba que ves .github, app, gradle, docs y sample.
+4) Ejecuta SUBIR_A_GITHUB.bat o usa GitHub Desktop.
+5) En GitHub: Actions -> Build Android APK -> Run workflow.
 
 ALBARAN DE PRUEBA
 -----------------
-Numero: 300712 (debajo de ALBARAN)
-Referencia: MTP11301N (debajo de ARTICULO)
-Producto: Matricula Acrilica (52x11)
+Numero: 300712
+Referencia/Codigo: MTP11301N
 Cantidad: 4

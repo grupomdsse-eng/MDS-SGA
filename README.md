@@ -1,144 +1,138 @@
-# SGA MDS — Android
+# SGA MDS — Android 1.3.0
 
-Proyecto Android nativo para gestión de almacén, lectura OCR de albaranes y picking mediante códigos de barras.
+Aplicación Android nativa para gestión de almacén, OCR de albaranes, picking mediante EAN y cierre de expediciones con etiquetas de transporte.
 
-## Funciones incluidas
+## Google Sheets configurado
 
-- Inventario local con **Código/Referencia, EAN, Descripción, Stock y Ubicación**.
-- Alta y edición manual de productos.
-- Importación de productos desde **CSV UTF-8** exportado desde Excel.
-- Reconoce encabezados como `Código`, `Referencia`, `Artículo`, `EAN`, `Descripción`, `Stock` y `Ubicación`.
-- Fotografía de un albarán con la cámara del dispositivo.
-- OCR local mediante **Google ML Kit Text Recognition**.
-- Detección automática de:
-  - número de albarán **situado visualmente justo debajo de la palabra ALBARÁN**;
-  - cliente (si se reconoce);
-  - referencia de la columna **ARTÍCULO**;
-  - descripción;
-  - cantidad de la columna **CANTIDAD**.
-- Parser reforzado con coordenadas OCR: la referencia se acepta **solo desde la columna situada debajo de ARTÍCULO** y la cantidad desde **CANTIDAD** cuando esas cabeceras son reconocidas.
-- Pantalla de revisión manual antes de guardar el albarán.
-- Picking con cámara usando **CameraX + ML Kit Barcode Scanning**.
-- Escáner estabilizado: una etiqueta quieta no genera lecturas repetidas en bucle; para volver a contar el mismo EAN hay que retirarlo del encuadre y mostrarlo de nuevo.
-- Las lecturas de código se serializan para evitar colas de operaciones y bloqueos tras un uso prolongado.
-- OCR fuera del hilo de interfaz y con tiempo máximo de lectura para evitar que una foto problemática congele la aplicación.
-- Limpieza automática de fotos temporales antiguas para limitar el crecimiento de la caché.
-- Cada lectura correcta añade una unidad picada.
-- Rechaza productos que no pertenezcan al albarán.
-- Impide picar más unidades de las indicadas.
-- Registro de lecturas correctas e incorrectas.
-- Finalización bloqueada mientras falten unidades.
-- Validación de stock antes de cerrar.
-- Al finalizar, descuenta el stock y registra el movimiento.
-- Historial de albaranes pendientes y finalizados.
-- Evita registrar dos veces el mismo número de albarán.
-- Funcionamiento local/offline para los datos del almacén.
+La aplicación usa como maestro de productos esta hoja:
 
-## Albarán de ejemplo usado para comprobar el OCR
+`https://docs.google.com/spreadsheets/d/1HmU9IPRGRWte1iXxUvYaoBc4jEmvNncHvMviI2Ggt3c/edit?gid=0#gid=0`
 
-El parser incluye pruebas para el formato aportado:
+Se intenta descargar automáticamente la pestaña `gid=0` como CSV al abrir la app. También hay un botón **Sincronizar** en Inicio e Inventario.
 
-- Albarán: `300712`
-- Cliente: `ALCALA AUTOCASION SL`
-- Referencia: `MTP11301N`
-- Descripción: `Matricula Acrilica (52x11)`
-- Cantidad: `4`
+Para que un APK pueda leer la hoja sin autenticación Google, la hoja debe permitir lectura mediante enlace. Si no puede descargarse, la app muestra el error y conserva el inventario local ya existente.
 
-La aplicación **siempre muestra una pantalla de revisión** antes de crear el picking. Un OCR nunca debe descontar stock directamente sin confirmación.
+### Columnas reconocidas
 
-### Reglas OCR de este formato
+La importación es tolerante a nombres habituales:
 
-1. La palabra `ALBARÁN` se localiza por posición en la imagen.
-2. Se toma como número el valor numérico alineado y más próximo **debajo** de esa palabra.
+- Código: `Código`, `Referencia`, `Artículo`, `SKU`, `Code`.
+- EAN: `EAN`, `EAN13`, `GTIN`, `Barcode`, `Código de barras`.
+- Descripción: `Descripción`, `Producto`, `Nombre`.
+- Stock: `Stock`, `Existencias`, `Unidades`, `Cantidad`, `Stock actual`, `Disponible`.
+- Ubicación: `Ubicación`, `Pasillo`, `Hueco`, `Almacén`.
+
+El **CÓDIGO** es la clave del producto. El **EAN** es el valor que se valida al escanear el código de barras.
+
+## Flujo completo
+
+1. La app sincroniza el maestro de productos de Google Sheets.
+2. El operario fotografía el albarán.
+3. El OCR detecta:
+   - el número situado debajo de `ALBARÁN`;
+   - las referencias situadas debajo de la columna `ARTÍCULO`;
+   - la cantidad de la columna `CANTIDAD`.
+4. En revisión se muestra el EAN y stock asociado a cada CÓDIGO.
+5. Al confirmar, la app exige que cada CÓDIGO exista en el maestro y tenga EAN.
+6. En picking se escanea el **EAN** del producto.
+7. Tras reconocerlo aparece una ventana para introducir manualmente cuántas unidades se añaden al picking.
+8. No permite superar la cantidad esperada del albarán.
+9. Cuando todos los productos están completos, aparece el escáner de **etiquetas de transporte**.
+10. Pueden registrarse varias etiquetas; los duplicados se rechazan.
+11. El botón de finalizar permanece bloqueado hasta tener el picking completo y al menos una etiqueta de transporte.
+12. Al finalizar se descuenta el stock local del SGA, se registra el movimiento, las etiquetas y el cierre del albarán.
+
+## Relación CÓDIGO → EAN
+
+El albarán no necesita contener el EAN. Por ejemplo:
+
+```text
+ARTÍCULO
+MTP11301N
+```
+
+La aplicación busca `MTP11301N` en Google Sheets. Si el maestro indica:
+
+```text
+Código: MTP11301N
+EAN: 8430000000001
+```
+
+el picking solo acepta `8430000000001` para esa referencia.
+
+La versión 1.3.0 **no autoasigna EAN desconocidos** al escanear, porque eso podría relacionar un código de barras incorrecto con un artículo.
+
+## Unidades manuales
+
+Al escanear un EAN aparece un diálogo con:
+
+- Código/referencia.
+- Descripción.
+- EAN.
+- Unidades ya picadas.
+- Unidades pendientes.
+- Campo `Unidades a añadir`.
+
+Puedes escanear una sola vez y añadir, por ejemplo, 4 unidades, siempre que el albarán tenga al menos 4 pendientes.
+
+## Etiquetas de transporte
+
+Después de completar los productos, el mismo sistema CameraX/ML Kit cambia al paso de expedición. Admite todos los formatos de código de barras soportados por ML Kit, útil para EAN, Code 128, QR, Data Matrix, PDF417, etc.
+
+Las etiquetas quedan almacenadas en `transport_labels` asociadas al albarán. No se puede cerrar sin registrar al menos una.
+
+## Stock y sincronización
+
+`ProductEntity` conserva dos valores conceptuales:
+
+- `sheetStock`: último stock base leído desde Google Sheets.
+- `stock`: stock disponible del SGA después de las salidas/ajustes locales.
+
+Al volver a sincronizar, la app conserva la diferencia local del SGA para evitar que una nueva descarga de la hoja restaure automáticamente las unidades ya dadas de salida desde este dispositivo.
+
+Esta versión **lee** Google Sheets; no escribe cambios en la hoja. La escritura bidireccional requeriría autenticación/API de Google Sheets.
+
+## OCR del formato aportado
+
+Las pruebas incluidas cubren el albarán de ejemplo:
+
+- Albarán: `300712`.
+- Referencia: `MTP11301N`.
+- Descripción: `Matricula Acrilica (52x11)`.
+- Cantidad: `4`.
+
+Reglas principales:
+
+1. `ALBARÁN` se localiza mediante las coordenadas OCR.
+2. El número se toma del valor alineado más próximo situado debajo.
 3. Se localiza la cabecera `ARTÍCULO`.
-4. Las referencias solo se extraen de la zona vertical que nace debajo de esa cabecera; no se buscan referencias por el resto de la hoja.
-5. La cantidad se cruza por fila con la columna `CANTIDAD`.
+4. Las referencias se aceptan únicamente dentro de esa columna.
+5. La cantidad se cruza horizontalmente con la columna `CANTIDAD`.
 
-## Importar el Excel de productos
+## Estabilidad
 
-La app importa CSV. Desde Excel usa **Guardar como → CSV UTF-8**.
+La aplicación incluye medidas para uso prolongado:
 
-Ejemplo incluido en `sample/productos.csv`:
+- `ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST`.
+- Un código quieto no genera lecturas repetidas continuamente.
+- Validaciones y escrituras de picking serializadas con `Mutex`.
+- El analizador, CameraX, ML Kit y el executor se liberan al abandonar la pantalla.
+- OCR fuera del hilo principal.
+- Timeout de 25 segundos para OCR problemático.
+- Limpieza de fotografías temporales antiguas.
+- Operaciones de Room transaccionales.
+- Migración de base de datos `1 → 2` sin borrar historial existente.
+- Prevención de albaranes y etiquetas duplicadas.
 
-```csv
-Código;EAN;Descripción;Stock;Ubicación
-MTP11301N;8430000000001;Matricula Acrilica (52x11);100;A-01-01
-```
+## Proyecto listo para GitHub
 
-La columna de referencia puede llamarse `Código`, `Referencia`, `Artículo`, `SKU`, etc. La aplicación normaliza mayúsculas/minúsculas y acentos.
-
-**Recomendación para EAN/GTIN:** en Excel configura esa columna como **Texto** antes de guardar el CSV. Así se conservan posibles ceros iniciales y Excel no transforma códigos largos a notación científica. La app también intenta normalizar valores exportados como `8,43E+12`.
-
-## Abrir el proyecto
-
-Requisitos recomendados:
-
-- Android Studio reciente.
-- JDK 17.
-- Android SDK 35.
-
-Abre **esta carpeta raíz**, la que contiene `settings.gradle.kts` y la carpeta `app`.
-
-## Compilar localmente
-
-### Windows
-
-```bat
-gradlew.bat :app:testDebugUnitTest :app:assembleDebug
-```
-
-### Linux / macOS
-
-```bash
-bash ./gradlew :app:testDebugUnitTest :app:assembleDebug
-```
-
-Los launchers `gradlew` y `gradlew.bat` descargan Gradle 8.9 la primera vez y verifican su SHA-256. No es necesario guardar un `gradle-wrapper.jar` binario en el repositorio.
-
-El APK queda en:
-
-```text
-app/build/outputs/apk/debug/app-debug.apk
-```
-
-## Generar el APK automáticamente en GitHub
-
-El proyecto ya incluye:
-
-```text
-.github/workflows/build-apk.yml
-```
-
-Al hacer push a `main`/`master`, o ejecutarlo manualmente desde **Actions**, GitHub:
-
-1. instala Java 17;
-2. instala Android SDK 35;
-3. instala Gradle 8.9;
-4. ejecuta los tests;
-5. compila el APK;
-6. publica `SGA-MDS-debug-apk` como artefacto descargable.
-
-## Cómo subirlo sin perder carpetas
-
-GitHub no guarda carpetas vacías y subir archivos sueltos desde el navegador puede llevar a errores de estructura.
-
-La forma más segura es:
-
-1. Extraer el ZIP completo en Windows.
-2. Crear un repositorio vacío en GitHub.
-3. Abrir esta carpeta con GitHub Desktop o Git.
-4. Hacer commit de **todo el contenido**.
-5. Publicar/push al repositorio.
-
-También se incluye `SUBIR_A_GITHUB.bat`, que conserva automáticamente toda la estructura si Git está instalado.
-
-Al abrir tu repositorio deben verse directamente:
+En la raíz deben verse directamente:
 
 ```text
 .github/
 app/
-gradle/
 docs/
+gradle/
 sample/
 .editorconfig
 .gitignore
@@ -147,32 +141,26 @@ gradle.properties
 gradlew
 gradlew.bat
 README.md
+README_PRIMERO.txt
+SUBIR_A_GITHUB.bat
+COMPROBAR_PROYECTO.bat
 settings.gradle.kts
 ```
 
-No subas el ZIP como un único archivo esperando que GitHub lo descomprima: GitHub no lo hace.
+No subas el ZIP como un único archivo a GitHub. Extrae todo primero y usa `SUBIR_A_GITHUB.bat`, GitHub Desktop o Git.
 
-## Flujo de trabajo del almacén
+## Generar el APK en GitHub
 
-1. **Inventario** → importa el maestro de productos.
-2. **Escanear albarán** → fotografía el documento.
-3. **Revisar lectura** → confirma número, referencias y cantidades.
-4. **Comenzar picking**.
-5. Escanea cada EAN con la cámara.
-6. La app muestra el progreso por referencia.
-7. Cuando todo esté completo, pulsa **Finalizar albarán y descontar stock**.
-8. El movimiento queda guardado en el historial.
+El workflow está en:
 
-## Seguridad operativa
+`.github/workflows/build-apk.yml`
 
-- No se descuenta stock al hacer OCR.
-- No se descuenta stock durante cada lectura: el descuento se hace de forma transaccional al cerrar el albarán.
-- No se permite cerrar con cantidades incompletas.
-- No se permite cerrar si el stock real es insuficiente.
-- Un producto ajeno al albarán queda rechazado y registrado.
-- Un albarán ya finalizado no puede volver a procesarse.
-- El mismo número de albarán no puede crearse dos veces.
+En GitHub entra en **Actions → Build Android APK → Run workflow**. Ejecuta tests y compila `app-debug.apk`, que se publica como artefacto `SGA-MDS-1.3.0-debug-apk`.
 
-## Nota de arquitectura
+## Versiones
 
-Esta versión guarda los datos en Room dentro del dispositivo. Es adecuada para un único terminal o para trabajar offline. Si se quiere utilizar varios móviles simultáneamente contra el mismo stock, la evolución correcta es añadir una API/backend central y sincronización multiusuario.
+- `versionCode = 4`
+- `versionName = 1.3.0`
+- `minSdk = 26`
+- `targetSdk = 35`
+- Java 17

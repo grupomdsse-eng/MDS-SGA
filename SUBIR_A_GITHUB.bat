@@ -36,7 +36,7 @@ if errorlevel 1 goto :error
 
 git diff --cached --quiet
 if errorlevel 1 (
-    git commit -m "SGA MDS - proyecto Android inicial"
+    git commit -m "SGA MDS 1.3.0 - Google Sheets, picking y transporte"
     if errorlevel 1 goto :error
 ) else (
     echo No hay cambios nuevos que guardar.

@@ -1,0 +1,15 @@
+SGA MDS 1.2.0
+==============
+
+- OCR del numero de albaran basado en coordenadas: numero mas proximo y alineado debajo de ALBARAN.
+- Referencias restringidas a la columna debajo de ARTICULO.
+- Cantidad asociada por coordenadas con la columna CANTIDAD.
+- Soporte para referencias largas que se extienden horizontalmente.
+- Tolerancia a un error OCR de un caracter al cruzar referencias con el inventario.
+- Bloqueo de lecturas repetidas del mismo codigo si permanece quieto ante la camara.
+- Serializacion de operaciones de picking para evitar acumulacion de coroutines/DB writes.
+- Liberacion explicita de CameraX, analizador, ML Kit y executor al salir del picking.
+- OCR pesado movido fuera del hilo principal.
+- Timeout OCR de 25 segundos.
+- Limite de fotos temporales de albaranes en cache.
+- Nuevas pruebas unitarias para numero de albaran por posicion y referencia por columna.

@@ -1,0 +1,16 @@
+SGA MDS 1.3.0
+=============
+
+- Sincronizacion directa con Google Sheets configurado por el usuario.
+- Carga de CÓDIGO, EAN, descripcion, stock y ubicacion.
+- Conservacion de ajustes/salidas locales frente a nuevas sincronizaciones mediante sheetStock.
+- El picking resuelve el EAN exclusivamente desde el maestro de productos.
+- Eliminada la autoasignacion insegura de EAN desconocidos.
+- Dialogo de cantidad tras cada lectura: permite sumar varias unidades de una sola vez.
+- Nueva tabla Room transport_labels con migracion 1 -> 2 sin borrar datos.
+- Escaneo de una o varias etiquetas de transporte.
+- Bloqueo de cierre si no existe ninguna etiqueta de transporte.
+- Compatibilidad de escaner ampliada a todos los formatos soportados por ML Kit.
+- Pantallas de inventario y principal con estado/boton de sincronizacion.
+- En revision y picking se muestra la relacion CÓDIGO -> EAN -> stock.
+- VersionCode 4 / VersionName 1.3.0.
