@@ -45,6 +45,9 @@ interface DeliveryDao {
     @Insert(onConflict = OnConflictStrategy.ABORT)
     suspend fun insertLog(log: ScanLogEntity)
 
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    suspend fun insertTransportLabel(label: TransportLabelEntity): Long
+
     @Query("SELECT * FROM delivery_notes WHERE id = :id LIMIT 1")
     suspend fun getNote(id: Long): DeliveryNoteEntity?
 
@@ -60,8 +63,14 @@ interface DeliveryDao {
     @Query("SELECT * FROM scan_logs WHERE noteId = :noteId ORDER BY scannedAt DESC, id DESC LIMIT :limit")
     suspend fun getLogs(noteId: Long, limit: Int = 50): List<ScanLogEntity>
 
-    @Query("UPDATE delivery_lines SET pickedQty = pickedQty + 1 WHERE id = :lineId AND pickedQty < expectedQty")
-    suspend fun incrementPicked(lineId: Long): Int
+    @Query("SELECT * FROM transport_labels WHERE noteId = :noteId ORDER BY scannedAt DESC, id DESC")
+    suspend fun getTransportLabels(noteId: Long): List<TransportLabelEntity>
+
+    @Query("DELETE FROM transport_labels WHERE noteId = :noteId AND id = :labelId")
+    suspend fun deleteTransportLabel(noteId: Long, labelId: Long): Int
+
+    @Query("UPDATE delivery_lines SET pickedQty = pickedQty + :quantity WHERE id = :lineId AND :quantity > 0 AND pickedQty + :quantity <= expectedQty")
+    suspend fun incrementPickedBy(lineId: Long, quantity: Int): Int
 
     @Query("UPDATE delivery_notes SET status = :status, completedAt = :completedAt WHERE id = :id")
     suspend fun updateStatus(id: Long, status: String, completedAt: Long?): Int

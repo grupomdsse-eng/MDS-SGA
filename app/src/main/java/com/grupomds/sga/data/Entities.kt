@@ -16,7 +16,9 @@ data class ProductEntity(
     val stock: Int = 0,
     val location: String = "",
     val active: Boolean = true,
-    val updatedAt: Long = System.currentTimeMillis()
+    val updatedAt: Long = System.currentTimeMillis(),
+    /** Último stock leído del Google Sheet. El stock local puede diferir por salidas del SGA. */
+    val sheetStock: Int? = null
 )
 
 @Entity(
@@ -82,6 +84,29 @@ data class ScanLogEntity(
 )
 
 @Entity(
+    tableName = "transport_labels",
+    foreignKeys = [
+        ForeignKey(
+            entity = DeliveryNoteEntity::class,
+            parentColumns = ["id"],
+            childColumns = ["noteId"],
+            onDelete = ForeignKey.CASCADE
+        )
+    ],
+    indices = [
+        Index("noteId"),
+        Index(value = ["noteId", "barcode"], unique = true),
+        Index("scannedAt")
+    ]
+)
+data class TransportLabelEntity(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val noteId: Long,
+    val barcode: String,
+    val scannedAt: Long = System.currentTimeMillis()
+)
+
+@Entity(
     tableName = "stock_movements",
     indices = [Index("productReference"), Index("createdAt")]
 )
@@ -95,8 +120,20 @@ data class StockMovementEntity(
     val createdAt: Long = System.currentTimeMillis()
 )
 
+data class ProductScanCandidate(
+    val barcode: String,
+    val reference: String,
+    val description: String,
+    val ean: String,
+    val expectedQty: Int,
+    val pickedQty: Int,
+    val remainingQty: Int
+)
+
 data class PickingSnapshot(
     val note: DeliveryNoteEntity,
     val lines: List<DeliveryLineEntity>,
-    val scanLogs: List<ScanLogEntity>
+    val scanLogs: List<ScanLogEntity>,
+    val transportLabels: List<TransportLabelEntity>,
+    val productsByReference: Map<String, ProductEntity>
 )

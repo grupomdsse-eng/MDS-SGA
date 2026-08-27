@@ -11,8 +11,11 @@ import com.grupomds.sga.SgaApplication
 import com.grupomds.sga.data.CsvImportResult
 import com.grupomds.sga.data.DeliveryNoteEntity
 import com.grupomds.sga.data.FinalizeResult
+import com.grupomds.sga.data.GoogleSheetStockSource
 import com.grupomds.sga.data.PickingSnapshot
 import com.grupomds.sga.data.ProductEntity
+import com.grupomds.sga.data.ProductScanCandidate
+import com.grupomds.sga.data.ProductScanPreview
 import com.grupomds.sga.data.ScanResult
 import com.grupomds.sga.ocr.DeliveryNoteParser
 import com.grupomds.sga.ocr.OcrToken
@@ -29,9 +32,9 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
-import kotlinx.coroutines.suspendCancellableCoroutine
 
 class SgaViewModel(application: Application) : AndroidViewModel(application) {
     private val repo = (application as SgaApplication).repository
@@ -61,8 +64,22 @@ class SgaViewModel(application: Application) : AndroidViewModel(application) {
     val scanBusy = _scanBusy.asStateFlow()
     private val scanMutex = Mutex()
 
+    private val _pendingProductScan = MutableStateFlow<ProductScanCandidate?>(null)
+    val pendingProductScan = _pendingProductScan.asStateFlow()
+
+    private val _syncBusy = MutableStateFlow(false)
+    val syncBusy = _syncBusy.asStateFlow()
+
+    private val _syncStatus = MutableStateFlow<String?>(null)
+    val syncStatus = _syncStatus.asStateFlow()
+
     private val _operationMessage = MutableStateFlow<String?>(null)
     val operationMessage = _operationMessage.asStateFlow()
+
+    init {
+        // Sincronización en segundo plano. Conserva las salidas locales del SGA mediante sheetStock.
+        syncStockFromGoogleSheet(showMessage = false)
+    }
 
     fun clearOperationMessage() {
         _operationMessage.value = null
@@ -76,17 +93,54 @@ class SgaViewModel(application: Application) : AndroidViewModel(application) {
         _ocrError.value = null
     }
 
+    fun clearPendingProductScan() {
+        _pendingProductScan.value = null
+    }
+
+    fun syncStockFromGoogleSheet(showMessage: Boolean = true) {
+        if (_syncBusy.value) return
+        _syncBusy.value = true
+        _syncStatus.value = "Sincronizando Google Sheets…"
+        viewModelScope.launch {
+            try {
+                val csv = withTimeout(15_000L) { GoogleSheetStockSource.downloadCsv() }
+                val result = repo.importCsv(csv)
+                val message = buildSyncMessage(result)
+                _syncStatus.value = message
+                if (showMessage) _operationMessage.value = message
+            } catch (_: TimeoutCancellationException) {
+                val message = "Google Sheets no ha respondido a tiempo. Revisa la conexión y vuelve a sincronizar."
+                _syncStatus.value = "Sin sincronizar: $message"
+                if (showMessage) _operationMessage.value = message
+            } catch (error: Throwable) {
+                val message = error.message ?: "No se pudo sincronizar Google Sheets"
+                _syncStatus.value = "Sin sincronizar: $message"
+                if (showMessage) _operationMessage.value = message
+            } finally {
+                _syncBusy.value = false
+            }
+        }
+    }
+
+    private fun buildSyncMessage(result: CsvImportResult): String = buildString {
+        append("Google Sheets: ${result.imported} nuevos, ${result.updated} actualizados")
+        if (result.errors.isNotEmpty()) {
+            append(". Avisos: ")
+            append(result.errors.take(3).joinToString(" | "))
+            if (result.errors.size > 3) append(" | …")
+        }
+    }
+
     fun scanDeliveryNote(uri: Uri, onDone: () -> Unit) {
         if (_ocrBusy.value) return
+        _ocrBusy.value = true
+        _ocrError.value = null
 
         viewModelScope.launch {
-            _ocrBusy.value = true
-            _ocrError.value = null
             val recognizer = TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
             try {
                 val app = getApplication<Application>()
 
-                // La carga de una foto grande puede tardar y no debe bloquear el hilo de interfaz.
                 val image = withContext(Dispatchers.IO) {
                     InputImage.fromFilePath(app, uri)
                 }
@@ -204,26 +258,94 @@ class SgaViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    /**
+     * Primera fase del picking: valida el EAN y abre el diálogo para indicar cuántas unidades
+     * se van a picar. No modifica cantidades hasta que el operario confirma.
+     */
     fun submitBarcode(noteId: Long, barcode: String) {
         val cleanBarcode = barcode.trim()
-        if (cleanBarcode.isBlank()) return
+        if (cleanBarcode.isBlank() || _pendingProductScan.value != null) return
 
         viewModelScope.launch {
-            // Evita una cola creciente de lecturas si la cámara sigue viendo el mismo código.
             if (!scanMutex.tryLock()) return@launch
             _scanBusy.value = true
             try {
                 _scanMessage.value = null
-                when (val result = repo.recordScan(noteId, cleanBarcode)) {
+                when (val result = repo.previewProductScan(noteId, cleanBarcode)) {
+                    is ProductScanPreview.Match -> _pendingProductScan.value = result.candidate
+                    is ProductScanPreview.Rejected -> {
+                        _scanMessage.value = false to result.message
+                        _picking.value = repo.pickingSnapshot(noteId)
+                    }
+                }
+            } catch (error: Throwable) {
+                _scanMessage.value = false to (error.message ?: "No se pudo validar el EAN")
+            } finally {
+                _scanBusy.value = false
+                scanMutex.unlock()
+            }
+        }
+    }
+
+    fun confirmProductScan(noteId: Long, quantity: Int) {
+        val candidate = _pendingProductScan.value ?: return
+        if (quantity !in 1..candidate.remainingQty) {
+            _scanMessage.value = false to "Indica una cantidad entre 1 y ${candidate.remainingQty}"
+            return
+        }
+
+        viewModelScope.launch {
+            if (!scanMutex.tryLock()) return@launch
+            _scanBusy.value = true
+            try {
+                when (val result = repo.recordScan(noteId, candidate.barcode, quantity)) {
+                    is ScanResult.Accepted -> _scanMessage.value = true to result.message
+                    is ScanResult.Rejected -> _scanMessage.value = false to result.message
+                }
+                _pendingProductScan.value = null
+                _picking.value = repo.pickingSnapshot(noteId)
+            } catch (error: Throwable) {
+                _scanMessage.value = false to (error.message ?: "No se pudo registrar la cantidad")
+            } finally {
+                _scanBusy.value = false
+                scanMutex.unlock()
+            }
+        }
+    }
+
+    fun submitTransportLabel(noteId: Long, barcode: String) {
+        val cleanBarcode = barcode.trim()
+        if (cleanBarcode.isBlank()) return
+        viewModelScope.launch {
+            if (!scanMutex.tryLock()) return@launch
+            _scanBusy.value = true
+            try {
+                when (val result = repo.recordTransportLabel(noteId, cleanBarcode)) {
                     is ScanResult.Accepted -> _scanMessage.value = true to result.message
                     is ScanResult.Rejected -> _scanMessage.value = false to result.message
                 }
                 _picking.value = repo.pickingSnapshot(noteId)
             } catch (error: Throwable) {
-                _scanMessage.value = false to (error.message ?: "No se pudo registrar la lectura")
+                _scanMessage.value = false to (error.message ?: "No se pudo registrar la etiqueta de transporte")
             } finally {
                 _scanBusy.value = false
                 scanMutex.unlock()
+            }
+        }
+    }
+
+    fun removeTransportLabel(noteId: Long, labelId: Long) {
+        viewModelScope.launch {
+            try {
+                val removed = repo.removeTransportLabel(noteId, labelId)
+                _scanMessage.value = if (removed) {
+                    true to "Etiqueta eliminada"
+                } else {
+                    false to "No se pudo eliminar la etiqueta"
+                }
+                _picking.value = repo.pickingSnapshot(noteId)
+            } catch (error: Throwable) {
+                _scanMessage.value = false to (error.message ?: "No se pudo eliminar la etiqueta")
             }
         }
     }
@@ -233,7 +355,7 @@ class SgaViewModel(application: Application) : AndroidViewModel(application) {
             when (val result = repo.finalize(noteId)) {
                 FinalizeResult.Success -> {
                     _picking.value = repo.pickingSnapshot(noteId)
-                    _operationMessage.value = "Albarán finalizado. La salida y el stock han quedado registrados."
+                    _operationMessage.value = "Albarán finalizado. Salida, stock y etiquetas de transporte registrados."
                     onSuccess()
                 }
                 is FinalizeResult.Error -> _operationMessage.value = result.message
@@ -263,14 +385,7 @@ class SgaViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             try {
                 val result: CsvImportResult = repo.importCsv(text)
-                _operationMessage.value = buildString {
-                    append("Importación: ${result.imported} nuevos, ${result.updated} actualizados")
-                    if (result.errors.isNotEmpty()) {
-                        append(". Avisos: ")
-                        append(result.errors.take(4).joinToString(" | "))
-                        if (result.errors.size > 4) append(" | …")
-                    }
-                }
+                _operationMessage.value = buildSyncMessage(result)
             } catch (error: Throwable) {
                 _operationMessage.value = error.message ?: "No se pudo importar el archivo"
             }

@@ -28,6 +28,8 @@ import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.Inventory2
+import androidx.compose.material.icons.filled.LocalShipping
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.QrCodeScanner
 import androidx.compose.material.icons.filled.UploadFile
 import androidx.compose.material3.AlertDialog
@@ -75,6 +77,7 @@ import androidx.navigation.navArgument
 import com.grupomds.sga.BuildConfig
 import com.grupomds.sga.data.DeliveryNoteEntity
 import com.grupomds.sga.data.ProductEntity
+import com.grupomds.sga.data.ProductScanCandidate
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -158,6 +161,8 @@ private fun titleFor(route: String?): String = when (route) {
 private fun HomeScreen(vm: SgaViewModel, nav: NavHostController) {
     val products by vm.products.collectAsStateWithLifecycle()
     val history by vm.history.collectAsStateWithLifecycle()
+    val syncBusy by vm.syncBusy.collectAsStateWithLifecycle()
+    val syncStatus by vm.syncStatus.collectAsStateWithLifecycle()
     val pending = history.count { it.status == DeliveryNoteEntity.STATUS_PENDING }
     val lowStock = products.count { it.stock <= 5 }
 
@@ -173,7 +178,39 @@ private fun HomeScreen(vm: SgaViewModel, nav: NavHostController) {
                 fontWeight = FontWeight.Bold
             )
             Spacer(Modifier.height(6.dp))
-            Text("Control de stock, OCR de albaranes y validación de salidas mediante código de barras.")
+            Text("Stock y EAN sincronizados con Google Sheets, OCR de albaranes y control de picking por código de barras.")
+        }
+
+        item {
+            Card(Modifier.fillMaxWidth()) {
+                Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(Modifier.weight(1f)) {
+                            Text("Google Sheets", fontWeight = FontWeight.Bold)
+                            Text(
+                                syncStatus ?: "Sincronización automática al abrir la aplicación",
+                                style = MaterialTheme.typography.bodySmall
+                            )
+                        }
+                        FilledTonalButton(
+                            enabled = !syncBusy,
+                            onClick = { vm.syncStockFromGoogleSheet() }
+                        ) {
+                            if (syncBusy) {
+                                CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+                            } else {
+                                Icon(Icons.Default.Refresh, contentDescription = null)
+                            }
+                            Spacer(Modifier.size(6.dp))
+                            Text("Sincronizar")
+                        }
+                    }
+                }
+            }
         }
 
         item {
@@ -190,7 +227,7 @@ private fun HomeScreen(vm: SgaViewModel, nav: NavHostController) {
         item {
             DashboardCard(
                 title = "Escanear albarán",
-                subtitle = "Fotografía el documento y detecta número, referencia, producto y cantidad.",
+                subtitle = "Lee ALBARÁN, la columna ARTÍCULO y CANTIDAD; después relaciona cada código con su EAN.",
                 icon = Icons.Default.CameraAlt,
                 onClick = { nav.navigate(Routes.SCAN) }
             )
@@ -198,7 +235,7 @@ private fun HomeScreen(vm: SgaViewModel, nav: NavHostController) {
         item {
             DashboardCard(
                 title = "Inventario",
-                subtitle = "Gestiona referencia, EAN, descripción, stock y ubicación.",
+                subtitle = "Productos, EAN y stock obtenidos del Google Sheet configurado.",
                 icon = Icons.Default.Inventory2,
                 onClick = { nav.navigate(Routes.INVENTORY) }
             )
@@ -206,7 +243,7 @@ private fun HomeScreen(vm: SgaViewModel, nav: NavHostController) {
         item {
             DashboardCard(
                 title = "Historial",
-                subtitle = "Consulta albaranes pendientes y finalizados con trazabilidad.",
+                subtitle = "Consulta albaranes, picking y etiquetas de transporte registradas.",
                 icon = Icons.Default.History,
                 onClick = { nav.navigate(Routes.HISTORY) }
             )
@@ -253,6 +290,8 @@ private fun DashboardCard(
 @Composable
 private fun InventoryScreen(vm: SgaViewModel) {
     val products by vm.products.collectAsStateWithLifecycle()
+    val syncBusy by vm.syncBusy.collectAsStateWithLifecycle()
+    val syncStatus by vm.syncStatus.collectAsStateWithLifecycle()
     val context = LocalContext.current
     var search by remember { mutableStateOf("") }
     var editing by remember { mutableStateOf<ProductEntity?>(null) }
@@ -284,6 +323,30 @@ private fun InventoryScreen(vm: SgaViewModel) {
     }
 
     Column(Modifier.fillMaxSize().padding(horizontal = 16.dp)) {
+        Card(Modifier.fillMaxWidth()) {
+            Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        Text("Stock desde Google Sheets", fontWeight = FontWeight.Bold)
+                        Text(syncStatus ?: "La aplicación sincroniza automáticamente al abrirse.", style = MaterialTheme.typography.bodySmall)
+                    }
+                    FilledTonalButton(
+                        enabled = !syncBusy,
+                        onClick = { vm.syncStockFromGoogleSheet() }
+                    ) {
+                        if (syncBusy) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+                        else Icon(Icons.Default.Refresh, contentDescription = null)
+                    }
+                }
+            }
+        }
+
+        Spacer(Modifier.height(8.dp))
+
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -292,7 +355,7 @@ private fun InventoryScreen(vm: SgaViewModel) {
             OutlinedTextField(
                 value = search,
                 onValueChange = { search = it },
-                label = { Text("Buscar referencia, EAN o producto") },
+                label = { Text("Buscar código, EAN o producto") },
                 modifier = Modifier.weight(1f),
                 singleLine = true
             )
@@ -311,7 +374,7 @@ private fun InventoryScreen(vm: SgaViewModel) {
                     )
                 }
             ) {
-                Icon(Icons.Default.UploadFile, contentDescription = "Importar CSV")
+                Icon(Icons.Default.UploadFile, contentDescription = "Importar CSV manual")
             }
         }
 
@@ -325,7 +388,7 @@ private fun InventoryScreen(vm: SgaViewModel) {
             Card(Modifier.fillMaxWidth()) {
                 Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     Text("Inventario vacío", fontWeight = FontWeight.Bold)
-                    Text("Importa un CSV exportado desde Excel. Se reconoce la columna CÓDIGO/REFERENCIA y la columna EAN.")
+                    Text("Pulsa Sincronizar. La hoja debe contener una columna CÓDIGO/REFERENCIA y una columna EAN.")
                 }
             }
             Spacer(Modifier.height(10.dp))
@@ -351,9 +414,15 @@ private fun InventoryScreen(vm: SgaViewModel) {
                         }
                         Text(product.description, maxLines = 2, overflow = TextOverflow.Ellipsis)
                         Text(
-                            text = "EAN: ${product.ean ?: "sin asignar"} · Ubicación: ${product.location.ifBlank { "—" }}",
+                            text = "EAN: ${product.ean ?: "sin EAN"} · Ubicación: ${product.location.ifBlank { "—" }}",
                             style = MaterialTheme.typography.bodySmall
                         )
+                        product.sheetStock?.let { sourceStock ->
+                            Text(
+                                text = "Stock base hoja: $sourceStock · Ajuste SGA: ${product.stock - sourceStock}",
+                                style = MaterialTheme.typography.bodySmall
+                            )
+                        }
                         Row(
                             horizontalArrangement = Arrangement.spacedBy(8.dp),
                             modifier = Modifier.padding(top = 8.dp)
@@ -462,7 +531,13 @@ private fun ScanDeliveryNoteScreen(vm: SgaViewModel, nav: NavHostController) {
     val context = LocalContext.current
     val busy by vm.ocrBusy.collectAsStateWithLifecycle()
     val error by vm.ocrError.collectAsStateWithLifecycle()
+    val syncBusy by vm.syncBusy.collectAsStateWithLifecycle()
+    val syncStatus by vm.syncStatus.collectAsStateWithLifecycle()
     var photoUri by remember { mutableStateOf<Uri?>(null) }
+
+    LaunchedEffect(Unit) {
+        vm.syncStockFromGoogleSheet(showMessage = false)
+    }
 
     val cameraLauncher = rememberLauncherForActivityResult(ActivityResultContracts.TakePicture()) { ok ->
         val uri = photoUri
@@ -495,8 +570,17 @@ private fun ScanDeliveryNoteScreen(vm: SgaViewModel, nav: NavHostController) {
             "La app toma el número situado justo debajo de ALBARÁN. Las referencias se leen únicamente de la columna situada debajo de ARTÍCULO y la cantidad de su columna CANTIDAD. Antes del picking puedes corregir cualquier dato."
         )
 
+        if (syncBusy) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
+                Text("Actualizando CÓDIGO, EAN y stock antes de leer el albarán…")
+            }
+        } else if (!syncStatus.isNullOrBlank()) {
+            Text(syncStatus.orEmpty(), style = MaterialTheme.typography.bodySmall)
+        }
+
         Button(
-            enabled = !busy,
+            enabled = !busy && !syncBusy,
             onClick = {
                 vm.clearOcrError()
                 val uri = createPhotoUri(context)
@@ -510,7 +594,7 @@ private fun ScanDeliveryNoteScreen(vm: SgaViewModel, nav: NavHostController) {
         }
 
         OutlinedButton(
-            enabled = !busy,
+            enabled = !busy && !syncBusy,
             onClick = { imageLauncher.launch(arrayOf("image/*")) }
         ) {
             Icon(Icons.Default.Image, contentDescription = null)
@@ -558,6 +642,7 @@ private fun createPhotoUri(context: Context): Uri {
 @Composable
 private fun ReviewDeliveryNoteScreen(vm: SgaViewModel, nav: NavHostController) {
     val draft by vm.draft.collectAsStateWithLifecycle()
+    val products by vm.products.collectAsStateWithLifecycle()
     val current = draft
 
     if (current == null) {
@@ -615,14 +700,23 @@ private fun ReviewDeliveryNoteScreen(vm: SgaViewModel, nav: NavHostController) {
         }
 
         itemsIndexed(current.lines) { index, line ->
+            val matched = products.firstOrNull { product ->
+                product.reference.equals(line.reference.replace(" ", ""), ignoreCase = true)
+            }
             Card(Modifier.fillMaxWidth()) {
                 Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text(
-                        text = if (line.matchedProduct) "Coincide con inventario" else "Revisar referencia",
-                        color = if (line.matchedProduct) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.secondary,
+                        text = if (matched != null) "Código relacionado con Google Sheets" else "Revisar código: no aparece en inventario",
+                        color = if (matched != null) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.secondary,
                         style = MaterialTheme.typography.labelMedium,
                         fontWeight = FontWeight.Bold
                     )
+                    if (matched != null) {
+                        Text(
+                            "EAN: ${matched.ean ?: "NO CONFIGURADO"} · Stock: ${matched.stock}",
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                    }
                     OutlinedTextField(
                         value = line.reference,
                         onValueChange = { vm.updateDraftLine(index, reference = it.uppercase()) },
@@ -695,10 +789,13 @@ private fun PickingScreen(
     val snapshot by vm.picking.collectAsStateWithLifecycle()
     val scanMessage by vm.scanMessage.collectAsStateWithLifecycle()
     val scanBusy by vm.scanBusy.collectAsStateWithLifecycle()
+    val pendingProductScan by vm.pendingProductScan.collectAsStateWithLifecycle()
     var manualBarcode by remember(noteId) { mutableStateOf("") }
+    var manualTransportBarcode by remember(noteId) { mutableStateOf("") }
 
     LaunchedEffect(noteId) {
         vm.clearScanMessage()
+        vm.clearPendingProductScan()
         vm.loadPicking(noteId)
     }
 
@@ -715,6 +812,11 @@ private fun PickingScreen(
     val pickingDone = totalExpected > 0 && totalPicked == totalExpected
     val completed = data.note.status == DeliveryNoteEntity.STATUS_COMPLETED
     val progress = if (totalExpected <= 0) 0f else (totalPicked.toFloat() / totalExpected.toFloat()).coerceIn(0f, 1f)
+    val hasTransportLabels = data.transportLabels.isNotEmpty()
+
+    LaunchedEffect(pickingDone) {
+        if (pickingDone) vm.clearScanMessage()
+    }
 
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
@@ -740,6 +842,7 @@ private fun PickingScreen(
 
         items(data.lines, key = { it.id }) { line ->
             val lineComplete = line.pickedQty == line.expectedQty
+            val product = data.productsByReference[line.productReference]
             Card(Modifier.fillMaxWidth()) {
                 Row(
                     modifier = Modifier.padding(14.dp),
@@ -754,6 +857,10 @@ private fun PickingScreen(
                     Column(Modifier.weight(1f)) {
                         Text(line.productReference, fontWeight = FontWeight.Bold)
                         Text(line.description)
+                        Text(
+                            "EAN: ${product?.ean ?: "NO CONFIGURADO"} · Stock: ${product?.stock ?: 0}",
+                            style = MaterialTheme.typography.bodySmall
+                        )
                     }
                     Text(
                         text = "${line.pickedQty}/${line.expectedQty}",
@@ -764,18 +871,18 @@ private fun PickingScreen(
             }
         }
 
-        if (!completed) {
+        if (!completed && !pickingDone) {
             item {
-                Text("Escáner de productos", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                Text("1. Picking de productos", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
                 Text(
-                    "Cada lectura suma una unidad. Para dos unidades con el mismo EAN, retira el código del recuadro y vuelve a mostrar el siguiente producto. Si no pertenece al albarán o la cantidad ya está completa, se rechaza y queda registrado.",
+                    "El albarán contiene el CÓDIGO del artículo. La aplicación busca ese CÓDIGO en Google Sheets, obtiene su EAN y solo acepta el código de barras que pertenezca a ese artículo. Al escanear podrás indicar manualmente cuántas unidades quieres añadir.",
                     style = MaterialTheme.typography.bodySmall
                 )
             }
 
             item {
                 BarcodeCamera(
-                    enabled = !pickingDone && !scanBusy,
+                    enabled = !scanBusy && pendingProductScan == null,
                     onBarcode = { code -> vm.submitBarcode(noteId, code) },
                     modifier = Modifier.fillMaxWidth().height(280.dp)
                 )
@@ -788,7 +895,7 @@ private fun PickingScreen(
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
                         CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
-                        Text("Registrando lectura…", style = MaterialTheme.typography.bodySmall)
+                        Text("Validando código…", style = MaterialTheme.typography.bodySmall)
                     }
                 }
             }
@@ -801,12 +908,12 @@ private fun PickingScreen(
                     OutlinedTextField(
                         value = manualBarcode,
                         onValueChange = { manualBarcode = it.filter(Char::isLetterOrDigit).uppercase() },
-                        label = { Text("EAN / código manual") },
+                        label = { Text("EAN manual (emergencia)") },
                         modifier = Modifier.weight(1f),
                         singleLine = true
                     )
                     FilledTonalButton(
-                        enabled = manualBarcode.isNotBlank() && !scanBusy,
+                        enabled = manualBarcode.isNotBlank() && !scanBusy && pendingProductScan == null,
                         onClick = {
                             vm.submitBarcode(noteId, manualBarcode)
                             manualBarcode = ""
@@ -814,42 +921,108 @@ private fun PickingScreen(
                     ) { Text("Validar") }
                 }
             }
+        }
 
-            scanMessage?.let { (accepted, message) ->
-                item {
-                    Card(
-                        colors = CardDefaults.cardColors(
-                            containerColor = if (accepted) {
-                                MaterialTheme.colorScheme.primaryContainer
-                            } else {
-                                MaterialTheme.colorScheme.errorContainer
-                            }
-                        )
-                    ) {
-                        Text(
-                            text = message,
-                            modifier = Modifier.padding(12.dp),
-                            color = if (accepted) {
-                                MaterialTheme.colorScheme.onPrimaryContainer
-                            } else {
-                                MaterialTheme.colorScheme.onErrorContainer
-                            },
-                            fontWeight = FontWeight.SemiBold
-                        )
-                    }
+        scanMessage?.let { (accepted, message) ->
+            item {
+                Card(
+                    colors = CardDefaults.cardColors(
+                        containerColor = if (accepted) {
+                            MaterialTheme.colorScheme.primaryContainer
+                        } else {
+                            MaterialTheme.colorScheme.errorContainer
+                        }
+                    )
+                ) {
+                    Text(
+                        text = message,
+                        modifier = Modifier.padding(12.dp),
+                        color = if (accepted) {
+                            MaterialTheme.colorScheme.onPrimaryContainer
+                        } else {
+                            MaterialTheme.colorScheme.onErrorContainer
+                        },
+                        fontWeight = FontWeight.SemiBold
+                    )
+                }
+            }
+        }
+
+        if (!completed && pickingDone) {
+            item {
+                HorizontalDivider()
+                Spacer(Modifier.height(4.dp))
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Icon(Icons.Default.LocalShipping, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                    Text("2. Etiquetas de transporte", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                }
+                Text(
+                    "El picking está completo. Escanea ahora todas las etiquetas de transporte del envío. Puedes registrar varias; no se admiten duplicadas.",
+                    style = MaterialTheme.typography.bodySmall
+                )
+            }
+
+            item {
+                BarcodeCamera(
+                    enabled = !scanBusy,
+                    onBarcode = { code -> vm.submitTransportLabel(noteId, code) },
+                    modifier = Modifier.fillMaxWidth().height(260.dp)
+                )
+            }
+
+            item {
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    OutlinedTextField(
+                        value = manualTransportBarcode,
+                        onValueChange = { manualTransportBarcode = it.uppercase() },
+                        label = { Text("Etiqueta manual (emergencia)") },
+                        modifier = Modifier.weight(1f),
+                        singleLine = true
+                    )
+                    FilledTonalButton(
+                        enabled = manualTransportBarcode.isNotBlank() && !scanBusy,
+                        onClick = {
+                            vm.submitTransportLabel(noteId, manualTransportBarcode)
+                            manualTransportBarcode = ""
+                        }
+                    ) { Text("Añadir") }
                 }
             }
 
-            if (data.scanLogs.isNotEmpty()) {
-                item {
-                    Text("Últimas lecturas", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
-                }
-                items(data.scanLogs.take(5), key = { it.id }) { log ->
-                    Text(
-                        text = "${if (log.accepted) "✓" else "✕"} ${log.barcode} · ${log.message}",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = if (log.accepted) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error
-                    )
+            item {
+                Card(Modifier.fillMaxWidth()) {
+                    Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Text(
+                            "Etiquetas registradas: ${data.transportLabels.size}",
+                            fontWeight = FontWeight.Bold
+                        )
+                        if (data.transportLabels.isEmpty()) {
+                            Text("Debes registrar al menos una etiqueta antes de finalizar.")
+                        } else {
+                            data.transportLabels.take(8).forEach { label ->
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.SpaceBetween
+                                ) {
+                                    Text(
+                                        "✓ ${label.barcode}",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        modifier = Modifier.weight(1f)
+                                    )
+                                    IconButton(onClick = { vm.removeTransportLabel(noteId, label.id) }) {
+                                        Icon(Icons.Default.Delete, contentDescription = "Eliminar etiqueta")
+                                    }
+                                }
+                            }
+                            if (data.transportLabels.size > 8) {
+                                Text("… y ${data.transportLabels.size - 8} más", style = MaterialTheme.typography.bodySmall)
+                            }
+                        }
+                    }
                 }
             }
 
@@ -862,23 +1035,103 @@ private fun PickingScreen(
                             }
                         }
                     },
-                    enabled = pickingDone && !scanBusy,
+                    enabled = hasTransportLabels && !scanBusy,
                     modifier = Modifier.fillMaxWidth()
                 ) {
-                    Text("Finalizar albarán y descontar stock")
+                    Icon(Icons.Default.CheckCircle, contentDescription = null)
+                    Spacer(Modifier.size(8.dp))
+                    Text("Finalizar y cerrar albarán")
                 }
             }
-        } else {
+        }
+
+        if (data.scanLogs.isNotEmpty()) {
+            item {
+                Text("Últimas lecturas de producto", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+            }
+            items(data.scanLogs.take(5), key = { it.id }) { log ->
+                Text(
+                    text = "${if (log.accepted) "✓" else "✕"} ${log.barcode} · ${log.message}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = if (log.accepted) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error
+                )
+            }
+        }
+
+        if (completed) {
             item {
                 Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)) {
-                    Column(Modifier.padding(14.dp)) {
+                    Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                         Text("Salida registrada", fontWeight = FontWeight.Bold)
-                        Text("El albarán está cerrado y las existencias ya fueron descontadas del inventario.")
+                        Text("El albarán está cerrado y las existencias locales del SGA ya fueron descontadas.")
+                        Text("Etiquetas de transporte: ${data.transportLabels.size}")
+                        data.transportLabels.take(5).forEach { Text(it.barcode, style = MaterialTheme.typography.bodySmall) }
                     }
                 }
             }
         }
     }
+
+    pendingProductScan?.let { candidate ->
+        ProductQuantityDialog(
+            candidate = candidate,
+            busy = scanBusy,
+            onDismiss = vm::clearPendingProductScan,
+            onConfirm = { quantity -> vm.confirmProductScan(noteId, quantity) }
+        )
+    }
+}
+
+@Composable
+private fun ProductQuantityDialog(
+    candidate: ProductScanCandidate,
+    busy: Boolean,
+    onDismiss: () -> Unit,
+    onConfirm: (Int) -> Unit
+) {
+    var quantityText by remember(candidate.barcode, candidate.pickedQty) { mutableStateOf("1") }
+    val quantity = quantityText.toIntOrNull()
+    val valid = quantity != null && quantity in 1..candidate.remainingQty
+
+    AlertDialog(
+        onDismissRequest = { if (!busy) onDismiss() },
+        title = { Text("Añadir unidades") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(candidate.reference, fontWeight = FontWeight.Bold)
+                Text(candidate.description)
+                Text("EAN: ${candidate.ean}")
+                Text("Picado: ${candidate.pickedQty}/${candidate.expectedQty} · Pendientes: ${candidate.remainingQty}")
+                OutlinedTextField(
+                    value = quantityText,
+                    onValueChange = { value -> quantityText = value.filter(Char::isDigit).take(5) },
+                    label = { Text("Unidades a añadir") },
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                    singleLine = true,
+                    enabled = !busy
+                )
+                if (quantity != null && quantity > candidate.remainingQty) {
+                    Text(
+                        "Máximo ${candidate.remainingQty} unidades",
+                        color = MaterialTheme.colorScheme.error,
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            Button(
+                enabled = valid && !busy,
+                onClick = { onConfirm(quantity ?: 1) }
+            ) {
+                if (busy) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+                else Text("Añadir ${quantity ?: 0}")
+            }
+        },
+        dismissButton = {
+            TextButton(enabled = !busy, onClick = onDismiss) { Text("Cancelar") }
+        }
+    )
 }
 
 @Composable

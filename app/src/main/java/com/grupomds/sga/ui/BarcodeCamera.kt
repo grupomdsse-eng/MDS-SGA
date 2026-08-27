@@ -38,9 +38,7 @@ import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
-import com.google.mlkit.vision.barcode.BarcodeScannerOptions
 import com.google.mlkit.vision.barcode.BarcodeScanning
-import com.google.mlkit.vision.barcode.common.Barcode
 import com.google.mlkit.vision.common.InputImage
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicBoolean
@@ -95,7 +93,7 @@ fun BarcodeCamera(
                 .border(3.dp, MaterialTheme.colorScheme.secondary, RoundedCornerShape(14.dp))
         )
         Text(
-            text = if (enabled) "Coloca el código dentro del recuadro" else "Procesando / picking completo",
+            text = if (enabled) "Coloca el código dentro del recuadro" else "Procesando / esperando confirmación",
             color = Color.White,
             modifier = Modifier
                 .align(Alignment.BottomCenter)
@@ -126,19 +124,9 @@ private fun CameraPreview(
     val onBarcodeState = rememberUpdatedState(onBarcode)
 
     val scanner = remember {
-        val options = BarcodeScannerOptions.Builder()
-            .setBarcodeFormats(
-                Barcode.FORMAT_EAN_8,
-                Barcode.FORMAT_EAN_13,
-                Barcode.FORMAT_CODE_128,
-                Barcode.FORMAT_CODE_39,
-                Barcode.FORMAT_UPC_A,
-                Barcode.FORMAT_UPC_E,
-                Barcode.FORMAT_ITF,
-                Barcode.FORMAT_QR_CODE
-            )
-            .build()
-        BarcodeScanning.getClient(options)
+        // Sin limitar formatos: productos suelen ser EAN/UPC y las etiquetas de transporte
+        // pueden usar Code 128, ITF, Data Matrix, PDF417, QR u otros formatos soportados.
+        BarcodeScanning.getClient()
     }
 
     DisposableEffect(Unit) {
@@ -203,7 +191,15 @@ private fun CameraPreview(
                                 if (disposed.get()) return@addOnSuccessListener
 
                                 val now = SystemClock.elapsedRealtime()
-                                val rawValue = barcodes.firstNotNullOfOrNull { it.rawValue?.trim()?.takeIf(String::isNotBlank) }
+                                // Si una etiqueta de transporte contiene varios códigos, damos
+                                // prioridad al de mayor superficie visible (normalmente el tracking principal).
+                                val detected = barcodes
+                                    .filter { !it.rawValue.isNullOrBlank() }
+                                    .maxByOrNull { barcode ->
+                                        val box = barcode.boundingBox
+                                        if (box == null) 0L else box.width().toLong() * box.height().toLong()
+                                    }
+                                val rawValue = detected?.rawValue?.trim()?.takeIf(String::isNotBlank)
 
                                 if (rawValue == null) {
                                     // El mismo artículo solo puede volver a contarse después de

@@ -18,4 +18,9 @@ class SgaRepositoryNormalizationTest {
     fun normalizesReferenceForMatching() {
         assertEquals("MTP11301N", SgaRepository.normalizeReference(" mtp11301n "))
     }
+
+    @Test
+    fun normalizesTransportBarcodeWithoutDestroyingTrackingSeparators() {
+        assertEquals("1z-abc/123.45", SgaRepository.normalizeTransportBarcode(" 1z-abc/123.45 "))
+    }
 }
