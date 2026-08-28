@@ -1,7 +1,7 @@
-# Estructura del proyecto SGA MDS 1.3.2
+# Estructura del proyecto SGA MDS 2.0.0
 
 ```text
-SGA_MDS_GitHub_Ready_v3_2/
+SGA_MDS_GitHub_Ready_v4/
 ├── .github/
 │   └── workflows/
 │       └── build-apk.yml
@@ -25,13 +25,16 @@ SGA_MDS_GitHub_Ready_v3_2/
 │       │   │   │   └── SafeOcrImageDecoder.kt
 │       │   │   └── ui/
 │       │   │       ├── BarcodeCamera.kt
+│       │   │       ├── DocumentCamera.kt
 │       │   │       ├── SgaApp.kt
 │       │   │       ├── SgaViewModel.kt
-│       │   │       └── theme/
+│       │   │       └── theme/Theme.kt
 │       │   └── res/
 │       └── test/
 ├── gradle/
 ├── docs/
+│   ├── ESTRUCTURA.md
+│   └── ANALISIS_MERCADO_WMS.md
 ├── sample/
 │   └── productos.csv
 ├── .editorconfig
@@ -47,13 +50,13 @@ SGA_MDS_GitHub_Ready_v3_2/
 └── settings.gradle.kts
 ```
 
-## Datos persistentes Room
+## Persistencia Room
 
-- `products`: CÓDIGO/Referencia, EAN, descripción, stock SGA, stock base Google Sheets y ubicación.
-- `delivery_notes`: cabecera e estado del albarán.
-- `delivery_lines`: cantidades esperadas y picadas.
-- `scan_logs`: trazabilidad de lecturas de producto.
-- `transport_labels`: etiquetas de transporte asociadas al albarán.
-- `stock_movements`: ajustes y salidas de stock.
+- `products`: código, EAN, descripción, stock SGA, stock base Sheets y ubicación.
+- `delivery_notes`: cabecera y estado de salida.
+- `delivery_lines`: cantidades previstas y picadas.
+- `scan_logs`: lecturas aceptadas/rechazadas.
+- `transport_labels`: etiquetas de expedición.
+- `stock_movements`: auditoría de variaciones de stock.
 
-La base de datos está en versión 2 e incluye migración desde la versión 1 sin borrar datos.
+La base de datos continúa en versión 2, por lo que 2.0.0 puede instalarse sobre 1.3.x sin una migración destructiva.

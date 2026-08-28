@@ -36,6 +36,7 @@ class SgaRepository(private val db: SgaDatabase) {
 
     fun observeProducts(): Flow<List<ProductEntity>> = products.observeAll()
     fun observeHistory(): Flow<List<DeliveryNoteEntity>> = deliveries.observeHistory()
+    fun observeMovements(limit: Int = 200): Flow<List<StockMovementEntity>> = movements.observeRecent(limit)
 
     suspend fun allProducts(): List<ProductEntity> = products.getAll()
 
@@ -106,6 +107,32 @@ class SgaRepository(private val db: SgaDatabase) {
                     delta = delta,
                     stockAfter = newStock,
                     reason = "Ajuste manual"
+                )
+            )
+        }
+        changed > 0
+    }
+
+    suspend fun productByBarcode(rawBarcode: String): ProductEntity? {
+        val barcode = normalizeBarcode(rawBarcode)
+        if (barcode.isBlank()) return null
+        return products.byEan(barcode)
+    }
+
+    suspend fun setPhysicalStock(referenceRaw: String, countedQty: Int): Boolean = db.withTransaction {
+        require(countedQty >= 0) { "El stock contado no puede ser negativo" }
+        val reference = normalizeReference(referenceRaw)
+        val product = products.byReference(reference) ?: return@withTransaction false
+        val delta = countedQty - product.stock
+        if (delta == 0) return@withTransaction true
+        val changed = products.setStock(reference, countedQty)
+        if (changed > 0) {
+            movements.insert(
+                StockMovementEntity(
+                    productReference = reference,
+                    delta = delta,
+                    stockAfter = countedQty,
+                    reason = "Recuento físico"
                 )
             )
         }

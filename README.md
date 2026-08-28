@@ -1,148 +1,157 @@
-# SGA MDS — Android 1.3.2
+# SGA MDS — Android 2.0.0
 
+Aplicación Android nativa para gestión operativa de almacén: maestro de productos desde Google Sheets, captura OCR de albaranes, picking por EAN, cantidades manuales, expedición con etiquetas de transporte, trazabilidad de stock y recuento físico.
 
-## Estabilización 1.3.2: cierres inesperados
+## 2.0.0 — rediseño profesional y cámara documental integrada
 
-Esta versión refuerza específicamente el funcionamiento prolongado: reduce la memoria usada por las fotos OCR, reutiliza el reconocedor de texto, protege el analizador de CameraX frente a excepciones y carreras al cerrar la pantalla, evita sincronizaciones automáticas duplicadas y captura las excepciones asíncronas para que no terminen el proceso. Si aun así Android detecta un fallo fatal, se guarda un diagnóstico local y en el siguiente arranque se muestra un aviso con el motivo resumido.
+Esta versión cambia de forma importante la captura de albaranes y la experiencia de uso:
 
-## Corrección 1.3.1: referencias nuevas de Google Sheets
-
-Antes de crear un albarán, la app fuerza una sincronización del maestro y espera a que termine. Además, las referencias se normalizan eliminando caracteres invisibles que puede introducir Google Sheets/Excel. El caso `PRMT1VMP` está cubierto por una prueba de regresión.
-
-Aplicación Android nativa para gestión de almacén, OCR de albaranes, picking mediante EAN y cierre de expediciones con etiquetas de transporte.
+- **Cámara documental dentro de la propia app con CameraX**: ya no abre una aplicación de cámara externa ni depende de permisos temporales `FileProvider` para leer la foto capturada.
+- La fotografía se guarda directamente en la caché privada de SGA MDS y el OCR abre el **archivo local real**, evitando el error `No se puede abrir la fotografía` visto en algunos dispositivos.
+- La cámara se desmonta antes de procesar el OCR para reducir consumo de memoria.
+- Guía visual A4, flash, botón de captura grande y mensajes operativos en la propia cámara.
+- Nuevo **Centro operativo** con KPI, avisos, cola de trabajo y accesos rápidos.
+- Nueva pantalla **Operaciones de salida** para reanudar albaranes pendientes y revisar expediciones cerradas.
+- Nueva pantalla **Movimientos de stock** para auditoría cronológica.
+- Nuevo **Recuento físico**: escanea EAN, introduce existencias reales y registra la diferencia como movimiento trazable.
+- Navegación inferior para Inicio / Operaciones / Stock / Historial.
+- Flujo visual de 4 etapas: **Documento → Picking → Transporte → Cierre**.
+- Entrada manual compatible con escáneres físicos tipo *keyboard wedge*: EAN y etiquetas pueden confirmarse también con Enter.
 
 ## Google Sheets configurado
 
-La aplicación usa como maestro de productos esta hoja:
+Maestro de productos:
 
 `https://docs.google.com/spreadsheets/d/1HmU9IPRGRWte1iXxUvYaoBc4jEmvNncHvMviI2Ggt3c/edit?gid=0#gid=0`
 
-Se intenta descargar automáticamente la pestaña `gid=0` como CSV al abrir la app. También hay un botón **Sincronizar** en Inicio e Inventario.
-
-Para que un APK pueda leer la hoja sin autenticación Google, la hoja debe permitir lectura mediante enlace. Si no puede descargarse, la app muestra el error y conserva el inventario local ya existente.
+La aplicación intenta descargar `gid=0` como CSV al iniciar y permite forzar una actualización desde la interfaz. Para lectura directa sin autenticación, la hoja debe permitir acceso de lectura mediante enlace.
 
 ### Columnas reconocidas
 
-La importación es tolerante a nombres habituales:
-
-- Código: `Código`, `Referencia`, `Artículo`, `SKU`, `Code`.
-- EAN: `EAN`, `EAN13`, `GTIN`, `Barcode`, `Código de barras`.
-- Descripción: `Descripción`, `Producto`, `Nombre`.
+- Código / referencia: `Código`, `Codigo`, `Referencia`, `Artículo`, `Articulo`, `SKU`, `Code`.
+- EAN: `EAN`, `EAN13`, `GTIN`, `Barcode`, `Código de barras`, `Codigo de barras`.
+- Descripción: `Descripción`, `Descripcion`, `Producto`, `Nombre`.
 - Stock: `Stock`, `Existencias`, `Unidades`, `Cantidad`, `Stock actual`, `Disponible`.
-- Ubicación: `Ubicación`, `Pasillo`, `Hueco`, `Almacén`.
+- Ubicación: `Ubicación`, `Ubicacion`, `Pasillo`, `Hueco`, `Almacén`.
 
-El **CÓDIGO** es la clave del producto. El **EAN** es el valor que se valida al escanear el código de barras.
+El **CÓDIGO** es la clave de relación con el albarán y el **EAN** es el código que se valida durante el picking.
 
-## Flujo completo
+## Flujo de una salida
 
-1. La app sincroniza el maestro de productos de Google Sheets.
-2. El operario fotografía el albarán.
-3. El OCR detecta:
-   - el número situado debajo de `ALBARÁN`;
-   - las referencias situadas debajo de la columna `ARTÍCULO`;
-   - la cantidad de la columna `CANTIDAD`.
-4. En revisión se muestra el EAN y stock asociado a cada CÓDIGO.
-5. Al confirmar, la app exige que cada CÓDIGO exista en el maestro y tenga EAN.
-6. En picking se escanea el **EAN** del producto.
-7. Tras reconocerlo aparece una ventana para introducir manualmente cuántas unidades se añaden al picking.
-8. No permite superar la cantidad esperada del albarán.
-9. Cuando todos los productos están completos, aparece el escáner de **etiquetas de transporte**.
-10. Pueden registrarse varias etiquetas; los duplicados se rechazan.
-11. El botón de finalizar permanece bloqueado hasta tener el picking completo y al menos una etiqueta de transporte.
-12. Al finalizar se descuenta el stock local del SGA, se registra el movimiento, las etiquetas y el cierre del albarán.
+1. El SGA sincroniza CÓDIGO, EAN y stock del Google Sheet.
+2. El operario abre **Nueva salida**.
+3. La cámara documental integrada fotografía el albarán.
+4. OCR detecta:
+   - número inmediatamente debajo de `ALBARÁN`;
+   - referencias únicamente en la columna inferior a `ARTÍCULO`;
+   - cantidad correspondiente en `CANTIDAD`.
+5. El operario revisa y corrige la lectura antes de generar la operación.
+6. Cada referencia del albarán se relaciona con su EAN del maestro.
+7. En picking se escanea el EAN.
+8. Tras una lectura correcta se indica manualmente cuántas unidades se añaden.
+9. No se permite superar la cantidad solicitada.
+10. Al terminar productos, se habilita el escáner de etiquetas de transporte.
+11. Se registra una o varias etiquetas, sin duplicados.
+12. Solo se habilita **Finalizar y cerrar** con picking completo y al menos una etiqueta.
+13. El cierre registra albarán, líneas, lecturas, etiquetas y movimientos de stock.
+
+## OCR del formato Metatrafic aportado
+
+Prueba de regresión incluida:
+
+- Albarán: `300712`
+- Referencia: `MTP11301N`
+- Cantidad: `4`
+
+Reglas de posicionamiento:
+
+1. `ALBARÁN` se localiza por coordenadas OCR.
+2. Se busca el valor válido más cercano **debajo y alineado** con esa cabecera.
+3. Se localiza `ARTÍCULO`.
+4. Se crea una banda virtual de columna bajo esa cabecera.
+5. Solo se consideran referencias dentro de esa banda.
+6. La cantidad se cruza por fila con la columna `CANTIDAD`.
 
 ## Relación CÓDIGO → EAN
 
-El albarán no necesita contener el EAN. Por ejemplo:
+Ejemplo:
 
 ```text
+ALBARÁN
+300712
+
 ARTÍCULO
 MTP11301N
 ```
 
-La aplicación busca `MTP11301N` en Google Sheets. Si el maestro indica:
+Si Google Sheets contiene:
 
 ```text
 Código: MTP11301N
 EAN: 8430000000001
 ```
 
-el picking solo acepta `8430000000001` para esa referencia.
+el picking acepta `8430000000001` y lo relaciona con `MTP11301N`. No se autoasignan EAN desconocidos.
 
-La aplicación **no autoasigna EAN desconocidos** al escanear, porque eso podría relacionar un código de barras incorrecto con un artículo.
+La normalización de referencias elimina BOM, NBSP, espacios invisibles, comillas y caracteres de ancho cero. El caso `PRMT1VMP` está cubierto por prueba de regresión.
 
-## Unidades manuales
+## Recuento físico
 
-Al escanear un EAN aparece un diálogo con:
+El módulo **Recuento de inventario** permite:
 
-- Código/referencia.
-- Descripción.
-- EAN.
-- Unidades ya picadas.
-- Unidades pendientes.
-- Campo `Unidades a añadir`.
+1. Escanear un EAN con cámara o lector físico.
+2. Mostrar referencia, descripción y stock registrado.
+3. Introducir el stock físico contado.
+4. Calcular la diferencia.
+5. Guardar el nuevo stock.
+6. Registrar un movimiento con motivo `Recuento físico`.
 
-Puedes escanear una sola vez y añadir, por ejemplo, 4 unidades, siempre que el albarán tenga al menos 4 pendientes.
+Así el cambio queda auditado y no se convierte en una edición silenciosa.
 
-## Etiquetas de transporte
+## Trazabilidad
 
-Después de completar los productos, el mismo sistema CameraX/ML Kit cambia al paso de expedición. Admite todos los formatos de código de barras soportados por ML Kit, útil para EAN, Code 128, QR, Data Matrix, PDF417, etc.
+`stock_movements` registra:
 
-Las etiquetas quedan almacenadas en `transport_labels` asociadas al albarán. No se puede cerrar sin registrar al menos una.
+- altas iniciales;
+- sincronizaciones que cambian existencias;
+- ajustes manuales;
+- recuentos físicos;
+- salidas de albaranes.
 
-## Stock y sincronización
-
-`ProductEntity` conserva dos valores conceptuales:
-
-- `sheetStock`: último stock base leído desde Google Sheets.
-- `stock`: stock disponible del SGA después de las salidas/ajustes locales.
-
-Al volver a sincronizar, la app conserva la diferencia local del SGA para evitar que una nueva descarga de la hoja restaure automáticamente las unidades ya dadas de salida desde este dispositivo.
-
-Esta versión **lee** Google Sheets; no escribe cambios en la hoja. La escritura bidireccional requeriría autenticación/API de Google Sheets.
-
-## OCR del formato aportado
-
-Las pruebas incluidas cubren el albarán de ejemplo:
-
-- Albarán: `300712`.
-- Referencia: `MTP11301N`.
-- Descripción: `Matricula Acrilica (52x11)`.
-- Cantidad: `4`.
-
-Reglas principales:
-
-1. `ALBARÁN` se localiza mediante las coordenadas OCR.
-2. El número se toma del valor alineado más próximo situado debajo.
-3. Se localiza la cabecera `ARTÍCULO`.
-4. Las referencias se aceptan únicamente dentro de esa columna.
-5. La cantidad se cruza horizontalmente con la columna `CANTIDAD`.
+La pantalla **Movimientos de stock** permite buscar por referencia, motivo o número de albarán y muestra el stock resultante de cada movimiento.
 
 ## Estabilidad
 
-La aplicación incluye medidas para uso prolongado:
+- Captura documental interna con `ImageCapture`, sin cámara externa.
+- Archivo de cámara privado y validación de existencia/tamaño antes del OCR.
+- Decoder OCR capaz de abrir directamente archivos locales o URIs del selector de documentos.
+- Fotografías grandes reducidas antes de ML Kit a una dimensión segura.
+- La cámara documental se libera al comenzar OCR.
+- `ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST` para códigos de barras.
+- Escaneo de EAN limitado a resolución operativa 1280×720.
+- No se acumulan fotogramas ni se repite indefinidamente un código inmóvil.
+- Scanner ML Kit y reconocedor OCR no se cierran mientras tienen tareas activas.
+- Executors y casos de uso CameraX se liberan al abandonar una pantalla.
+- Timeouts en OCR y sincronización.
+- Límites de tamaño de CSV/Google Sheets.
+- Operaciones Room transaccionales.
+- Corrutinas con barrera de excepciones y diagnóstico local de fallos fatales.
+- Prevención de albaranes y etiquetas de transporte duplicados.
 
-- `ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST`: no acumula fotogramas de cámara; el análisis de códigos se limita a 1280×720 para reducir consumo sostenido.
-- El analizador de códigos protege `InputImage`, `scanner.process()` y callbacks; un error de CameraX/ML Kit se registra y el siguiente fotograma puede continuar.
-- El scanner no se cierra mientras exista una tarea ML Kit activa, evitando carreras al cambiar de pantalla.
-- Un código quieto no genera lecturas repetidas continuamente.
-- Validaciones y escrituras de picking serializadas con `Mutex`.
-- El executor y los casos de uso CameraX se liberan al abandonar la pantalla.
-- El OCR reutiliza un único reconocedor de texto y se cierra al destruir el `ViewModel`.
-- Las fotografías de 12–50 MP se decodifican a un máximo aproximado de 1.800 px antes del OCR; la rotación EXIF se entrega a ML Kit sin crear una segunda copia del bitmap.
-- La memoria del bitmap se libera después de que ML Kit termina la lectura.
-- OCR, lectura de CSV y descargas fuera del hilo principal.
-- Timeout de 25 segundos para OCR problemático y límites de tamaño para CSV/Google Sheets.
-- Limpieza de fotografías temporales antiguas.
-- Las corrutinas del `ViewModel` tienen una barrera de excepciones para que un fallo asíncrono controlable no cierre la app.
-- Los flujos Room de inventario e historial registran errores en lugar de propagarlos sin control.
-- Registro local de diagnóstico del último fallo fatal, sin enviar datos fuera del dispositivo.
-- Operaciones de Room transaccionales y migración `1 → 2` sin borrar historial existente.
-- Prevención de albaranes y etiquetas duplicadas.
+## Persistencia local / modo de trabajo
+
+Room mantiene el trabajo del dispositivo aunque no haya red temporalmente. Google Sheets actúa como maestro de productos; el SGA conserva el stock local después de sus movimientos mediante:
+
+- `sheetStock`: último stock base recibido de Sheets.
+- `stock`: existencias del SGA con movimientos locales aplicados.
+
+Una nueva sincronización conserva la diferencia local para no restaurar unidades ya expedidas.
+
+> La versión actual **lee** Google Sheets, pero no escribe cambios de vuelta a la hoja. Una sincronización bidireccional multiusuario requiere un backend/API autenticado para evitar conflictos entre dispositivos.
 
 ## Proyecto listo para GitHub
 
-En la raíz deben verse directamente:
+En la raíz del repositorio deben aparecer directamente:
 
 ```text
 .github/
@@ -163,20 +172,30 @@ COMPROBAR_PROYECTO.bat
 settings.gradle.kts
 ```
 
-No subas el ZIP como un único archivo a GitHub. Extrae todo primero y usa `SUBIR_A_GITHUB.bat`, GitHub Desktop o Git.
+No subas el ZIP como un único archivo. Extrae su contenido y usa `SUBIR_A_GITHUB.bat`, GitHub Desktop o Git.
 
-## Generar el APK en GitHub
+## Compilar APK
 
-El workflow está en:
+Workflow:
 
 `.github/workflows/build-apk.yml`
 
-En GitHub entra en **Actions → Build Android APK → Run workflow**. Ejecuta tests y compila `app-debug.apk`, que se publica como artefacto `SGA-MDS-1.3.2-debug-apk`.
+En GitHub: **Actions → Build Android APK → Run workflow**.
 
-## Versiones
+El workflow ejecuta tests y genera el artefacto:
 
-- `versionCode = 6`
-- `versionName = 1.3.2`
+`SGA-MDS-2.0.0-debug-apk`
+
+## Versiones técnicas
+
+- `versionCode = 7`
+- `versionName = 2.0.0`
 - `minSdk = 26`
 - `targetSdk = 35`
+- `compileSdk = 35`
 - Java 17
+- Kotlin 1.9.25
+- Jetpack Compose + Material 3
+- Room
+- CameraX
+- ML Kit Text Recognition + Barcode Scanning

@@ -43,7 +43,7 @@ object GoogleSheetStockSource {
             instanceFollowRedirects = true
             useCaches = false
             setRequestProperty("Accept", "text/csv,text/plain,*/*")
-            setRequestProperty("User-Agent", "SGA-MDS-Android/1.3.2")
+            setRequestProperty("User-Agent", "SGA-MDS-Android/2.0.0")
             setRequestProperty("Cache-Control", "no-cache, no-store, max-age=0")
             setRequestProperty("Pragma", "no-cache")
         }

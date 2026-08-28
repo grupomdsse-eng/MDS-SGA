@@ -18,6 +18,7 @@ import com.grupomds.sga.data.ProductEntity
 import com.grupomds.sga.data.ProductScanCandidate
 import com.grupomds.sga.data.ProductScanPreview
 import com.grupomds.sga.data.ScanResult
+import com.grupomds.sga.data.StockMovementEntity
 import com.grupomds.sga.ocr.DeliveryNoteParser
 import com.grupomds.sga.ocr.OcrToken
 import com.grupomds.sga.ocr.ParsedDeliveryNote
@@ -78,6 +79,13 @@ class SgaViewModel(application: Application) : AndroidViewModel(application) {
         }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
+    val movements: StateFlow<List<StockMovementEntity>> = repo.observeMovements()
+        .catch { error ->
+            AppCrashReporter.recordHandled(application, "Flujo movimientos", error)
+            emit(emptyList())
+        }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
     private val _draft = MutableStateFlow<ParsedDeliveryNote?>(null)
     val draft = _draft.asStateFlow()
 
@@ -109,6 +117,12 @@ class SgaViewModel(application: Application) : AndroidViewModel(application) {
 
     private val _operationMessage = MutableStateFlow<String?>(null)
     val operationMessage = _operationMessage.asStateFlow()
+
+    private val _countProduct = MutableStateFlow<ProductEntity?>(null)
+    val countProduct = _countProduct.asStateFlow()
+
+    private val _countMessage = MutableStateFlow<String?>(null)
+    val countMessage = _countMessage.asStateFlow()
 
     init {
         AppCrashReporter.consumePreviousFatalNotice(application)?.let { notice ->
@@ -201,7 +215,11 @@ class SgaViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun scanDeliveryNote(uri: Uri, onDone: () -> Unit) {
+    fun scanDeliveryNoteFile(file: java.io.File, onDone: () -> Unit) {
+        scanDeliveryNote(Uri.fromFile(file), localFilePath = file.absolutePath, onDone = onDone)
+    }
+
+    fun scanDeliveryNote(uri: Uri, localFilePath: String? = null, onDone: () -> Unit) {
         if (!ocrTaskInFlight.compareAndSet(false, true)) {
             _ocrError.value = "Todavía se está liberando una lectura OCR anterior. Espera unos segundos y vuelve a intentarlo."
             return
@@ -218,7 +236,7 @@ class SgaViewModel(application: Application) : AndroidViewModel(application) {
 
                 // Evita cargar una fotografía de 12-50 MP completa en RAM.
                 val decodedImage = withContext(Dispatchers.IO) {
-                    SafeOcrImageDecoder.decode(app, uri)
+                    SafeOcrImageDecoder.decode(app, uri, localFilePath)
                 }
                 val bitmap = decodedImage.bitmap
                 bitmapForOcr = bitmap
@@ -572,6 +590,64 @@ class SgaViewModel(application: Application) : AndroidViewModel(application) {
             } catch (error: Throwable) {
                 AppCrashReporter.recordHandled(getApplication(), "Ajustar stock", error)
                 _operationMessage.value = error.message ?: "No se pudo actualizar el stock"
+            }
+        }
+    }
+
+    fun clearCountProduct() {
+        _countProduct.value = null
+    }
+
+    fun clearCountMessage() {
+        _countMessage.value = null
+    }
+
+    fun submitCountBarcode(barcode: String) {
+        val clean = barcode.trim()
+        if (clean.isBlank() || _scanBusy.value) return
+        _scanBusy.value = true
+        viewModelScope.launch(coroutineExceptionHandler) {
+            try {
+                val product = repo.productByBarcode(clean)
+                if (product == null) {
+                    _countProduct.value = null
+                    _countMessage.value = "El EAN $clean no existe en el maestro sincronizado."
+                } else {
+                    _countMessage.value = null
+                    _countProduct.value = product
+                }
+            } catch (cancel: CancellationException) {
+                throw cancel
+            } catch (error: Throwable) {
+                AppCrashReporter.recordHandled(getApplication(), "Recuento - buscar EAN", error)
+                _countMessage.value = error.message ?: "No se pudo consultar el producto"
+            } finally {
+                _scanBusy.value = false
+            }
+        }
+    }
+
+    fun confirmPhysicalCount(quantity: Int) {
+        val product = _countProduct.value ?: return
+        if (quantity < 0 || _scanBusy.value) return
+        _scanBusy.value = true
+        viewModelScope.launch(coroutineExceptionHandler) {
+            try {
+                val previous = product.stock
+                val ok = repo.setPhysicalStock(product.reference, quantity)
+                if (ok) {
+                    _countProduct.value = null
+                    _countMessage.value = "${product.reference}: recuento registrado · $previous → $quantity unidades"
+                } else {
+                    _countMessage.value = "No se pudo registrar el recuento de ${product.reference}"
+                }
+            } catch (cancel: CancellationException) {
+                throw cancel
+            } catch (error: Throwable) {
+                AppCrashReporter.recordHandled(getApplication(), "Recuento - confirmar", error)
+                _countMessage.value = error.message ?: "No se pudo registrar el recuento"
+            } finally {
+                _scanBusy.value = false
             }
         }
     }

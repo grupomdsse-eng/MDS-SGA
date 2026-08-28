@@ -1,7 +1,5 @@
 package com.grupomds.sga.ui
 
-import android.content.Context
-import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
@@ -18,10 +16,20 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.AssignmentTurnedIn
+import androidx.compose.material.icons.filled.ChevronRight
+import androidx.compose.material.icons.filled.CloudDone
+import androidx.compose.material.icons.filled.FactCheck
+import androidx.compose.material.icons.filled.Home
+import androidx.compose.material.icons.filled.ListAlt
+import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.SwapVert
+import androidx.compose.material.icons.filled.WarningAmber
 import androidx.compose.material.icons.filled.CameraAlt
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Delete
@@ -29,7 +37,6 @@ import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.Inventory2
 import androidx.compose.material.icons.filled.LocalShipping
-import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.QrCodeScanner
 import androidx.compose.material.icons.filled.UploadFile
 import androidx.compose.material3.AlertDialog
@@ -44,6 +51,9 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.NavigationBar
+import androidx.compose.material3.NavigationBarItem
+import androidx.compose.material3.Surface
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
@@ -60,12 +70,11 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.core.content.FileProvider
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.NavHostController
 import androidx.navigation.NavType
@@ -74,19 +83,21 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
-import com.grupomds.sga.BuildConfig
 import com.grupomds.sga.data.DeliveryNoteEntity
 import com.grupomds.sga.data.ProductEntity
+import com.grupomds.sga.data.StockMovementEntity
 import com.grupomds.sga.data.ProductScanCandidate
 import com.grupomds.sga.data.SgaRepository
-import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
 private object Routes {
     const val HOME = "home"
+    const val OPERATIONS = "operations"
     const val INVENTORY = "inventory"
+    const val MOVEMENTS = "movements"
+    const val COUNT = "count"
     const val SCAN = "scan"
     const val REVIEW = "review"
     const val HISTORY = "history"
@@ -110,18 +121,59 @@ fun SgaApp(vm: SgaViewModel) {
         }
     }
 
+    val rootRoutes = setOf(Routes.HOME, Routes.OPERATIONS, Routes.INVENTORY, Routes.HISTORY)
+    val showBottomBar = route in rootRoutes
+
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text(titleFor(route)) },
+                title = {
+                    Column {
+                        Text(titleFor(route), fontWeight = FontWeight.SemiBold)
+                        if (route in rootRoutes) {
+                            Text(
+                                "MDS Warehouse · Operación en tiempo real",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+                },
                 navigationIcon = {
-                    if (route != Routes.HOME) {
+                    if (route !in rootRoutes) {
                         IconButton(onClick = { nav.popBackStack() }) {
                             Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Volver")
                         }
                     }
                 }
             )
+        },
+        bottomBar = {
+            if (showBottomBar) {
+                NavigationBar {
+                    listOf(
+                        Triple(Routes.HOME, "Inicio", Icons.Default.Home),
+                        Triple(Routes.OPERATIONS, "Operaciones", Icons.Default.AssignmentTurnedIn),
+                        Triple(Routes.INVENTORY, "Stock", Icons.Default.Inventory2),
+                        Triple(Routes.HISTORY, "Historial", Icons.Default.History)
+                    ).forEach { (target, label, icon) ->
+                        NavigationBarItem(
+                            selected = route == target,
+                            onClick = {
+                                if (route != target) {
+                                    nav.navigate(target) {
+                                        launchSingleTop = true
+                                        popUpTo(Routes.HOME) { saveState = true }
+                                        restoreState = true
+                                    }
+                                }
+                            },
+                            icon = { Icon(icon, contentDescription = null) },
+                            label = { Text(label) }
+                        )
+                    }
+                }
+            }
         },
         snackbarHost = { SnackbarHost(snackbar) }
     ) { padding ->
@@ -131,7 +183,10 @@ fun SgaApp(vm: SgaViewModel) {
             modifier = Modifier.padding(padding)
         ) {
             composable(Routes.HOME) { HomeScreen(vm, nav) }
+            composable(Routes.OPERATIONS) { OperationsScreen(vm, nav) }
             composable(Routes.INVENTORY) { InventoryScreen(vm) }
+            composable(Routes.MOVEMENTS) { MovementsScreen(vm) }
+            composable(Routes.COUNT) { CountScreen(vm) }
             composable(Routes.SCAN) { ScanDeliveryNoteScreen(vm, nav) }
             composable(Routes.REVIEW) { ReviewDeliveryNoteScreen(vm, nav) }
             composable(Routes.HISTORY) { HistoryScreen(vm, nav) }
@@ -150,114 +205,173 @@ fun SgaApp(vm: SgaViewModel) {
 }
 
 private fun titleFor(route: String?): String = when (route) {
+    Routes.OPERATIONS -> "Operaciones"
     Routes.INVENTORY -> "Inventario"
-    Routes.SCAN -> "Escanear albarán"
-    Routes.REVIEW -> "Revisar lectura"
+    Routes.MOVEMENTS -> "Movimientos de stock"
+    Routes.COUNT -> "Recuento de inventario"
+    Routes.SCAN -> "Nueva salida"
+    Routes.REVIEW -> "Validación del albarán"
     Routes.HISTORY -> "Historial"
-    Routes.PICKING -> "Picking"
-    else -> "SGA MDS · Almacén"
+    Routes.PICKING -> "Preparación y expedición"
+    else -> "Centro operativo"
 }
 
 @Composable
 private fun HomeScreen(vm: SgaViewModel, nav: NavHostController) {
     val products by vm.products.collectAsStateWithLifecycle()
     val history by vm.history.collectAsStateWithLifecycle()
+    val movements by vm.movements.collectAsStateWithLifecycle()
     val syncBusy by vm.syncBusy.collectAsStateWithLifecycle()
     val syncStatus by vm.syncStatus.collectAsStateWithLifecycle()
+
     val pending = history.count { it.status == DeliveryNoteEntity.STATUS_PENDING }
-    val lowStock = products.count { it.stock <= 5 }
+    val completedToday = history.count {
+        it.status == DeliveryNoteEntity.STATUS_COMPLETED && it.completedAt?.let(::isToday) == true
+    }
+    val lowStock = products.count { it.stock in 0..5 }
+    val withoutEan = products.count { it.ean.isNullOrBlank() }
+    val totalUnits = products.sumOf { it.stock }
 
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(20.dp),
+        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 14.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp)
     ) {
         item {
-            Text(
-                text = "Sistema de gestión de almacén",
-                style = MaterialTheme.typography.headlineSmall,
-                fontWeight = FontWeight.Bold
+            ProcessHeader(
+                eyebrow = "CONTROL DE ALMACÉN",
+                title = "Centro operativo",
+                subtitle = "Preparación, expedición, trazabilidad y stock en una única vista para el operario."
             )
-            Spacer(Modifier.height(6.dp))
-            Text("Stock y EAN sincronizados con Google Sheets, OCR de albaranes y control de picking por código de barras.")
         }
 
         item {
-            Card(Modifier.fillMaxWidth()) {
-                Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
+            SyncBanner(syncBusy = syncBusy, syncStatus = syncStatus, onSync = { vm.syncStockFromGoogleSheet() })
+        }
+
+        item {
+            Card(
+                onClick = { nav.navigate(Routes.SCAN) },
+                modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)
+            ) {
+                Row(
+                    modifier = Modifier.padding(18.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(14.dp)
+                ) {
+                    Surface(
+                        color = MaterialTheme.colorScheme.primary,
+                        shape = MaterialTheme.shapes.large
                     ) {
-                        Column(Modifier.weight(1f)) {
-                            Text("Google Sheets", fontWeight = FontWeight.Bold)
-                            Text(
-                                syncStatus ?: "Sincronización automática al abrir la aplicación",
-                                style = MaterialTheme.typography.bodySmall
-                            )
-                        }
-                        FilledTonalButton(
-                            enabled = !syncBusy,
-                            onClick = { vm.syncStockFromGoogleSheet() }
-                        ) {
-                            if (syncBusy) {
-                                CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
-                            } else {
-                                Icon(Icons.Default.Refresh, contentDescription = null)
-                            }
-                            Spacer(Modifier.size(6.dp))
-                            Text("Sincronizar")
-                        }
+                        Icon(
+                            Icons.Default.CameraAlt,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.onPrimary,
+                            modifier = Modifier.padding(12.dp).size(30.dp)
+                        )
                     }
+                    Column(Modifier.weight(1f)) {
+                        Text("Nueva salida", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                        Text("Fotografiar albarán → validar → picking → transporte → cierre")
+                    }
+                    Icon(Icons.Default.ChevronRight, contentDescription = null)
                 }
             }
         }
 
         item {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(10.dp)
-            ) {
-                SummaryCard("Productos", products.size.toString(), Modifier.weight(1f))
-                SummaryCard("Pendientes", pending.toString(), Modifier.weight(1f))
-                SummaryCard("Stock ≤ 5", lowStock.toString(), Modifier.weight(1f))
+            Text("Indicadores operativos", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+        }
+
+        item {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                SummaryCard("Pendientes", pending.toString(), "Preparaciones abiertas", Modifier.weight(1f))
+                SummaryCard("Expedidos hoy", completedToday.toString(), "Albaranes cerrados", Modifier.weight(1f))
+            }
+        }
+        item {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                SummaryCard("Stock total", totalUnits.toString(), "${products.size} referencias", Modifier.weight(1f))
+                SummaryCard("Stock crítico", lowStock.toString(), "≤ 5 unidades", Modifier.weight(1f))
+            }
+        }
+
+        if (withoutEan > 0 || lowStock > 0) {
+            item {
+                StatusPanel(
+                    title = "Atención operativa",
+                    message = buildString {
+                        if (withoutEan > 0) append("$withoutEan referencias sin EAN. ")
+                        if (lowStock > 0) append("$lowStock referencias con stock crítico.")
+                    }.trim(),
+                    tone = StatusTone.WARNING
+                )
             }
         }
 
         item {
+            Text("Accesos de almacén", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+        }
+        item {
             DashboardCard(
-                title = "Escanear albarán",
-                subtitle = "Lee ALBARÁN, la columna ARTÍCULO y CANTIDAD; después relaciona cada código con su EAN.",
-                icon = Icons.Default.CameraAlt,
-                onClick = { nav.navigate(Routes.SCAN) }
+                title = "Cola de operaciones",
+                subtitle = "Reanuda preparaciones pendientes y revisa expediciones completadas.",
+                icon = Icons.Default.AssignmentTurnedIn,
+                onClick = { nav.navigate(Routes.OPERATIONS) }
             )
         }
         item {
             DashboardCard(
-                title = "Inventario",
-                subtitle = "Productos, EAN y stock obtenidos del Google Sheet configurado.",
+                title = "Inventario y maestro de EAN",
+                subtitle = "Stock sincronizado con Google Sheets, ubicaciones y ajustes controlados.",
                 icon = Icons.Default.Inventory2,
                 onClick = { nav.navigate(Routes.INVENTORY) }
             )
         }
         item {
             DashboardCard(
-                title = "Historial",
-                subtitle = "Consulta albaranes, picking y etiquetas de transporte registradas.",
-                icon = Icons.Default.History,
-                onClick = { nav.navigate(Routes.HISTORY) }
+                title = "Trazabilidad de stock",
+                subtitle = "Consulta entradas, salidas y ajustes con stock resultante.",
+                icon = Icons.Default.SwapVert,
+                onClick = { nav.navigate(Routes.MOVEMENTS) }
             )
+        }
+        item {
+            DashboardCard(
+                title = "Recuento de inventario",
+                subtitle = "Escanea un EAN, introduce el stock físico y registra la diferencia con trazabilidad.",
+                icon = Icons.Default.FactCheck,
+                onClick = { nav.navigate(Routes.COUNT) }
+            )
+        }
+
+        if (history.isNotEmpty()) {
+            item {
+                Text("Actividad reciente", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+            }
+            items(history.take(3), key = { "home-note-${it.id}" }) { note ->
+                CompactOperationCard(note = note, onClick = { nav.navigate(Routes.picking(note.id)) })
+            }
         }
     }
 }
 
 @Composable
-private fun SummaryCard(title: String, value: String, modifier: Modifier = Modifier) {
-    Card(modifier = modifier) {
-        Column(Modifier.padding(12.dp)) {
-            Text(value, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-            Text(title, style = MaterialTheme.typography.labelMedium)
+private fun SummaryCard(
+    title: String,
+    value: String,
+    caption: String,
+    modifier: Modifier = Modifier
+) {
+    Card(
+        modifier = modifier,
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow)
+    ) {
+        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Text(value, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+            Text(title, style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold)
+            Text(caption, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
 }
@@ -269,23 +383,418 @@ private fun DashboardCard(
     icon: androidx.compose.ui.graphics.vector.ImageVector,
     onClick: () -> Unit
 ) {
-    Card(
-        onClick = onClick,
-        modifier = Modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
-    ) {
+    Card(onClick = onClick, modifier = Modifier.fillMaxWidth()) {
         Row(
-            modifier = Modifier.padding(18.dp),
+            modifier = Modifier.padding(16.dp),
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(16.dp)
+            horizontalArrangement = Arrangement.spacedBy(14.dp)
         ) {
-            Icon(icon, contentDescription = null, modifier = Modifier.size(34.dp), tint = MaterialTheme.colorScheme.primary)
+            Surface(color = MaterialTheme.colorScheme.surfaceContainerHighest, shape = MaterialTheme.shapes.medium) {
+                Icon(icon, contentDescription = null, modifier = Modifier.padding(10.dp).size(26.dp), tint = MaterialTheme.colorScheme.primary)
+            }
             Column(Modifier.weight(1f)) {
                 Text(title, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.titleMedium)
-                Text(subtitle, style = MaterialTheme.typography.bodyMedium)
+                Text(subtitle, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            Icon(Icons.Default.ChevronRight, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+    }
+}
+
+@Composable
+private fun ProcessHeader(eyebrow: String, title: String, subtitle: String) {
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Text(eyebrow, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
+        Text(title, style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
+        Text(subtitle, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    }
+}
+
+@Composable
+private fun SyncBanner(syncBusy: Boolean, syncStatus: String?, onSync: () -> Unit) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow)
+    ) {
+        Row(
+            modifier = Modifier.padding(12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            if (syncBusy) CircularProgressIndicator(Modifier.size(22.dp), strokeWidth = 2.dp)
+            else Icon(Icons.Default.CloudDone, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+            Column(Modifier.weight(1f)) {
+                Text("Maestro de productos", fontWeight = FontWeight.SemiBold)
+                Text(
+                    syncStatus ?: "Sincronización automática con Google Sheets",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+            TextButton(enabled = !syncBusy, onClick = onSync) { Text("Actualizar") }
+        }
+    }
+}
+
+private enum class StatusTone { INFO, WARNING, ERROR, SUCCESS }
+
+@Composable
+private fun StatusPanel(
+    title: String,
+    message: String,
+    tone: StatusTone,
+    loading: Boolean = false
+) {
+    val container = when (tone) {
+        StatusTone.ERROR -> MaterialTheme.colorScheme.errorContainer
+        StatusTone.WARNING -> MaterialTheme.colorScheme.secondaryContainer
+        StatusTone.SUCCESS -> MaterialTheme.colorScheme.primaryContainer
+        StatusTone.INFO -> MaterialTheme.colorScheme.surfaceContainerHighest
+    }
+    val content = when (tone) {
+        StatusTone.ERROR -> MaterialTheme.colorScheme.onErrorContainer
+        StatusTone.WARNING -> MaterialTheme.colorScheme.onSecondaryContainer
+        StatusTone.SUCCESS -> MaterialTheme.colorScheme.onPrimaryContainer
+        StatusTone.INFO -> MaterialTheme.colorScheme.onSurface
+    }
+    Card(colors = CardDefaults.cardColors(containerColor = container), modifier = Modifier.fillMaxWidth()) {
+        Row(Modifier.padding(14.dp), horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.Top) {
+            if (loading) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
+            else if (tone == StatusTone.WARNING) Icon(Icons.Default.WarningAmber, contentDescription = null, tint = content)
+            Column(Modifier.weight(1f)) {
+                Text(title, fontWeight = FontWeight.Bold, color = content)
+                Text(message, style = MaterialTheme.typography.bodySmall, color = content)
             }
         }
     }
+}
+
+@Composable
+private fun WorkflowStepper(current: Int, labels: List<String>) {
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        labels.forEachIndexed { index, label ->
+            val step = index + 1
+            val active = step == current
+            val done = step < current
+            Surface(
+                modifier = Modifier.weight(1f),
+                color = when {
+                    active -> MaterialTheme.colorScheme.primaryContainer
+                    done -> MaterialTheme.colorScheme.surfaceContainerHighest
+                    else -> MaterialTheme.colorScheme.surfaceContainerLow
+                },
+                shape = MaterialTheme.shapes.small
+            ) {
+                Column(Modifier.padding(horizontal = 6.dp, vertical = 8.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                    Text(
+                        if (done) "✓" else step.toString(),
+                        style = MaterialTheme.typography.labelLarge,
+                        fontWeight = FontWeight.Bold,
+                        color = if (active) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Text(label, style = MaterialTheme.typography.labelSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun OperationsScreen(vm: SgaViewModel, nav: NavHostController) {
+    val history by vm.history.collectAsStateWithLifecycle()
+    var search by remember { mutableStateOf("") }
+    val query = search.trim()
+    val visible = if (query.isBlank()) history else history.filter {
+        it.number.contains(query, ignoreCase = true) || it.customer.contains(query, ignoreCase = true)
+    }
+    val pending = visible.filter { it.status == DeliveryNoteEntity.STATUS_PENDING }
+    val completed = visible.filter { it.status == DeliveryNoteEntity.STATUS_COMPLETED }
+
+    LazyColumn(
+        modifier = Modifier.fillMaxSize(),
+        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 14.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        item {
+            ProcessHeader(
+                eyebrow = "COLA DE TRABAJO",
+                title = "Operaciones de salida",
+                subtitle = "Prioriza tareas pendientes, reanuda el picking y confirma expediciones desde el mismo flujo."
+            )
+        }
+        item {
+            Button(onClick = { nav.navigate(Routes.SCAN) }, modifier = Modifier.fillMaxWidth()) {
+                Icon(Icons.Default.CameraAlt, contentDescription = null)
+                Spacer(Modifier.size(8.dp))
+                Text("Crear nueva salida")
+            }
+        }
+        item {
+            OutlinedTextField(
+                value = search,
+                onValueChange = { search = it },
+                label = { Text("Buscar albarán o cliente") },
+                leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
+                modifier = Modifier.fillMaxWidth(),
+                singleLine = true
+            )
+        }
+        item {
+            Text("Pendientes · ${pending.size}", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+        }
+        if (pending.isEmpty()) {
+            item { StatusPanel("Cola despejada", "No hay preparaciones pendientes con este filtro.", StatusTone.SUCCESS) }
+        } else {
+            items(pending, key = { "pending-${it.id}" }) { note ->
+                CompactOperationCard(note, onClick = { nav.navigate(Routes.picking(note.id)) })
+            }
+        }
+        item {
+            Text("Completadas · ${completed.size}", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+        }
+        items(completed.take(30), key = { "completed-${it.id}" }) { note ->
+            CompactOperationCard(note, onClick = { nav.navigate(Routes.picking(note.id)) })
+        }
+    }
+}
+
+@Composable
+private fun CompactOperationCard(note: DeliveryNoteEntity, onClick: () -> Unit) {
+    val completed = note.status == DeliveryNoteEntity.STATUS_COMPLETED
+    Card(onClick = onClick, modifier = Modifier.fillMaxWidth()) {
+        Row(Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            Surface(
+                color = if (completed) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.secondaryContainer,
+                shape = MaterialTheme.shapes.medium
+            ) {
+                Icon(
+                    if (completed) Icons.Default.CheckCircle else Icons.Default.QrCodeScanner,
+                    contentDescription = null,
+                    modifier = Modifier.padding(9.dp),
+                    tint = if (completed) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.secondary
+                )
+            }
+            Column(Modifier.weight(1f)) {
+                Text("Albarán ${note.number}", fontWeight = FontWeight.Bold)
+                Text(note.customer.ifBlank { "Cliente no indicado" }, style = MaterialTheme.typography.bodySmall)
+                Text(
+                    if (completed) "Finalizado · ${formatDate(note.completedAt ?: note.createdAt)}" else "Pendiente · ${formatDate(note.createdAt)}",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            Icon(Icons.Default.ChevronRight, contentDescription = null)
+        }
+    }
+}
+
+@Composable
+private fun MovementsScreen(vm: SgaViewModel) {
+    val movements by vm.movements.collectAsStateWithLifecycle()
+    var search by remember { mutableStateOf("") }
+    val visible = remember(movements, search) {
+        val q = search.trim()
+        if (q.isBlank()) movements else movements.filter {
+            it.productReference.contains(q, ignoreCase = true) ||
+                it.reason.contains(q, ignoreCase = true) ||
+                it.deliveryNoteNumber.orEmpty().contains(q, ignoreCase = true)
+        }
+    }
+
+    LazyColumn(
+        modifier = Modifier.fillMaxSize(),
+        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 14.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp)
+    ) {
+        item {
+            ProcessHeader(
+                eyebrow = "TRAZABILIDAD",
+                title = "Movimientos de stock",
+                subtitle = "Auditoría cronológica de ajustes y salidas, con existencias resultantes después de cada movimiento."
+            )
+        }
+        item {
+            OutlinedTextField(
+                value = search,
+                onValueChange = { search = it },
+                label = { Text("Buscar referencia, motivo o albarán") },
+                leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
+                modifier = Modifier.fillMaxWidth(),
+                singleLine = true
+            )
+        }
+        if (visible.isEmpty()) {
+            item { StatusPanel("Sin movimientos", "Todavía no hay movimientos que mostrar.", StatusTone.INFO) }
+        } else {
+            items(visible, key = { it.id }) { movement -> MovementCard(movement) }
+        }
+    }
+}
+
+@Composable
+private fun MovementCard(movement: StockMovementEntity) {
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Row(Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            Surface(
+                color = if (movement.delta >= 0) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.secondaryContainer,
+                shape = MaterialTheme.shapes.small
+            ) {
+                Text(
+                    text = if (movement.delta >= 0) "+${movement.delta}" else movement.delta.toString(),
+                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
+                    fontWeight = FontWeight.Bold
+                )
+            }
+            Column(Modifier.weight(1f)) {
+                Text(movement.productReference, fontWeight = FontWeight.Bold)
+                Text(movement.reason, style = MaterialTheme.typography.bodySmall)
+                movement.deliveryNoteNumber?.let { Text("Albarán $it", style = MaterialTheme.typography.labelSmall) }
+                Text(formatDate(movement.createdAt), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            Column(horizontalAlignment = Alignment.End) {
+                Text("Stock", style = MaterialTheme.typography.labelSmall)
+                Text(movement.stockAfter.toString(), fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium)
+            }
+        }
+    }
+}
+
+@Composable
+private fun CountScreen(vm: SgaViewModel) {
+    val product by vm.countProduct.collectAsStateWithLifecycle()
+    val message by vm.countMessage.collectAsStateWithLifecycle()
+    val busy by vm.scanBusy.collectAsStateWithLifecycle()
+    var manualBarcode by remember { mutableStateOf("") }
+
+    LaunchedEffect(Unit) {
+        vm.clearCountProduct()
+        vm.clearCountMessage()
+    }
+
+    LazyColumn(
+        modifier = Modifier.fillMaxSize(),
+        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 14.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        item {
+            ProcessHeader(
+                eyebrow = "CONTROL DE INVENTARIO",
+                title = "Recuento físico",
+                subtitle = "Verifica existencias reales por EAN. Cada diferencia queda registrada como movimiento de recuento físico."
+            )
+        }
+        item {
+            StatusPanel(
+                title = "Disciplina de recuento",
+                message = "Escanea la etiqueta del producto, cuenta físicamente las unidades y confirma el valor real. El sistema registra la diferencia, no una edición silenciosa.",
+                tone = StatusTone.INFO
+            )
+        }
+        item {
+            BarcodeCamera(
+                enabled = !busy && product == null,
+                onBarcode = vm::submitCountBarcode,
+                modifier = Modifier.fillMaxWidth().height(300.dp)
+            )
+        }
+        item {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                OutlinedTextField(
+                    value = manualBarcode,
+                    onValueChange = { manualBarcode = it.filter(Char::isLetterOrDigit).uppercase() },
+                    label = { Text("EAN manual / escáner físico") },
+                    modifier = Modifier.weight(1f),
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                    keyboardActions = KeyboardActions(onDone = {
+                        if (manualBarcode.isNotBlank() && !busy && product == null) {
+                            vm.submitCountBarcode(manualBarcode)
+                            manualBarcode = ""
+                        }
+                    })
+                )
+                FilledTonalButton(
+                    enabled = manualBarcode.isNotBlank() && !busy && product == null,
+                    onClick = {
+                        vm.submitCountBarcode(manualBarcode)
+                        manualBarcode = ""
+                    }
+                ) { Text("Buscar") }
+            }
+        }
+        if (!message.isNullOrBlank()) {
+            item {
+                StatusPanel(
+                    title = if (message.orEmpty().contains("registrado", ignoreCase = true)) "Recuento guardado" else "Resultado",
+                    message = message.orEmpty(),
+                    tone = if (message.orEmpty().contains("registrado", ignoreCase = true)) StatusTone.SUCCESS else StatusTone.WARNING
+                )
+            }
+        }
+    }
+
+    product?.let { selected ->
+        PhysicalCountDialog(
+            product = selected,
+            busy = busy,
+            onDismiss = vm::clearCountProduct,
+            onConfirm = vm::confirmPhysicalCount
+        )
+    }
+}
+
+@Composable
+private fun PhysicalCountDialog(
+    product: ProductEntity,
+    busy: Boolean,
+    onDismiss: () -> Unit,
+    onConfirm: (Int) -> Unit
+) {
+    var countedText by remember(product.reference, product.stock) { mutableStateOf(product.stock.toString()) }
+    val counted = countedText.toIntOrNull()
+    AlertDialog(
+        onDismissRequest = { if (!busy) onDismiss() },
+        title = { Text("Confirmar recuento") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(product.reference, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                Text(product.description)
+                Text("EAN: ${product.ean ?: "—"}", style = MaterialTheme.typography.bodySmall)
+                Text("Stock registrado: ${product.stock}", fontWeight = FontWeight.SemiBold)
+                OutlinedTextField(
+                    value = countedText,
+                    onValueChange = { countedText = it.filter(Char::isDigit).take(7) },
+                    label = { Text("Stock físico contado") },
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                    singleLine = true,
+                    enabled = !busy,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                if (counted != null) {
+                    val delta = counted - product.stock
+                    Text(
+                        "Diferencia: ${if (delta >= 0) "+$delta" else delta.toString()}",
+                        color = if (delta == 0) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.secondary,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            Button(enabled = counted != null && counted >= 0 && !busy, onClick = { counted?.let(onConfirm) }) {
+                if (busy) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+                else Text("Registrar recuento")
+            }
+        },
+        dismissButton = { TextButton(enabled = !busy, onClick = onDismiss) { Text("Cancelar") } }
+    )
+}
+
+private fun isToday(epoch: Long): Boolean {
+    val formatter = SimpleDateFormat("yyyyMMdd", Locale.getDefault())
+    return formatter.format(Date(epoch)) == formatter.format(Date())
 }
 
 @Composable
@@ -293,7 +802,6 @@ private fun InventoryScreen(vm: SgaViewModel) {
     val products by vm.products.collectAsStateWithLifecycle()
     val syncBusy by vm.syncBusy.collectAsStateWithLifecycle()
     val syncStatus by vm.syncStatus.collectAsStateWithLifecycle()
-    val context = LocalContext.current
     var search by remember { mutableStateOf("") }
     var editing by remember { mutableStateOf<ProductEntity?>(null) }
     var showNew by remember { mutableStateOf(false) }
@@ -316,30 +824,16 @@ private fun InventoryScreen(vm: SgaViewModel) {
         }
     }
 
-    Column(Modifier.fillMaxSize().padding(horizontal = 16.dp)) {
-        Card(Modifier.fillMaxWidth()) {
-            Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    Column(Modifier.weight(1f)) {
-                        Text("Stock desde Google Sheets", fontWeight = FontWeight.Bold)
-                        Text(syncStatus ?: "La aplicación sincroniza automáticamente al abrirse.", style = MaterialTheme.typography.bodySmall)
-                    }
-                    FilledTonalButton(
-                        enabled = !syncBusy,
-                        onClick = { vm.syncStockFromGoogleSheet() }
-                    ) {
-                        if (syncBusy) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
-                        else Icon(Icons.Default.Refresh, contentDescription = null)
-                    }
-                }
-            }
-        }
+    Column(Modifier.fillMaxSize().padding(horizontal = 16.dp, vertical = 12.dp)) {
+        ProcessHeader(
+            eyebrow = "MAESTRO DE PRODUCTOS",
+            title = "Inventario",
+            subtitle = "Consulta CÓDIGO, EAN, ubicación y existencias. Los ajustes manuales quedan registrados en trazabilidad."
+        )
+        Spacer(Modifier.height(12.dp))
+        SyncBanner(syncBusy = syncBusy, syncStatus = syncStatus, onSync = { vm.syncStockFromGoogleSheet() })
 
-        Spacer(Modifier.height(8.dp))
+        Spacer(Modifier.height(10.dp))
 
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -522,125 +1016,107 @@ private fun ProductDialog(
 
 @Composable
 private fun ScanDeliveryNoteScreen(vm: SgaViewModel, nav: NavHostController) {
-    val context = LocalContext.current
     val busy by vm.ocrBusy.collectAsStateWithLifecycle()
     val error by vm.ocrError.collectAsStateWithLifecycle()
     val syncBusy by vm.syncBusy.collectAsStateWithLifecycle()
     val syncStatus by vm.syncStatus.collectAsStateWithLifecycle()
-    var photoUri by remember { mutableStateOf<Uri?>(null) }
 
     LaunchedEffect(Unit) {
         vm.syncStockFromGoogleSheet(showMessage = false)
-    }
-
-    val cameraLauncher = rememberLauncherForActivityResult(ActivityResultContracts.TakePicture()) { ok ->
-        val uri = photoUri
-        if (ok && uri != null) {
-            vm.scanDeliveryNote(uri) { nav.navigate(Routes.REVIEW) }
-        }
     }
 
     val imageLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) vm.scanDeliveryNote(uri) { nav.navigate(Routes.REVIEW) }
     }
 
-    Column(
-        modifier = Modifier.fillMaxSize().padding(20.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(16.dp)
+    LazyColumn(
+        modifier = Modifier.fillMaxSize(),
+        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 14.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
-        Icon(
-            Icons.Default.QrCodeScanner,
-            contentDescription = null,
-            modifier = Modifier.size(72.dp),
-            tint = MaterialTheme.colorScheme.primary
-        )
-        Text(
-            text = "Fotografía el albarán completo",
-            style = MaterialTheme.typography.headlineSmall,
-            fontWeight = FontWeight.Bold
-        )
-        Text(
-            "La app toma el número situado justo debajo de ALBARÁN. Las referencias se leen únicamente de la columna situada debajo de ARTÍCULO y la cantidad de su columna CANTIDAD. Antes del picking puedes corregir cualquier dato."
-        )
-
-        if (syncBusy) {
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
-                Text("Actualizando CÓDIGO, EAN y stock antes de leer el albarán…")
-            }
-        } else if (!syncStatus.isNullOrBlank()) {
-            Text(syncStatus.orEmpty(), style = MaterialTheme.typography.bodySmall)
+        item {
+            ProcessHeader(
+                eyebrow = "SALIDAS · OCR DOCUMENTAL",
+                title = "Capturar albarán",
+                subtitle = "El sistema identifica el número situado bajo ALBARÁN y toma las referencias exclusivamente de la columna ARTÍCULO."
+            )
         }
 
-        Button(
-            enabled = !busy && !syncBusy,
-            onClick = {
-                vm.clearOcrError()
-                runCatching {
-                    val uri = createPhotoUri(context)
-                    photoUri = uri
-                    cameraLauncher.launch(uri)
-                }.onFailure { error ->
-                    vm.reportUiError("No se pudo abrir la cámara para fotografiar el albarán", error)
-                }
-            }
-        ) {
-            Icon(Icons.Default.CameraAlt, contentDescription = null)
-            Spacer(Modifier.size(8.dp))
-            Text("Abrir cámara")
+        item {
+            WorkflowStepper(current = 1, labels = listOf("Documento", "Picking", "Transporte", "Cierre"))
         }
 
-        OutlinedButton(
-            enabled = !busy && !syncBusy,
-            onClick = {
-                runCatching { imageLauncher.launch(arrayOf("image/*")) }
-                    .onFailure { error -> vm.reportUiError("No se pudo abrir el selector de imágenes", error) }
+        item {
+            SyncBanner(syncBusy = syncBusy, syncStatus = syncStatus, onSync = { vm.syncStockFromGoogleSheet() })
+        }
+
+        if (!busy) {
+            item {
+                DocumentCamera(
+                    enabled = !syncBusy,
+                    onCaptured = { file ->
+                        vm.clearOcrError()
+                        vm.scanDeliveryNoteFile(file) { nav.navigate(Routes.REVIEW) }
+                    },
+                    onError = { message, cause -> vm.reportUiError(message, cause) },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(520.dp)
+                )
             }
-        ) {
-            Icon(Icons.Default.Image, contentDescription = null)
-            Spacer(Modifier.size(8.dp))
-            Text("Elegir una foto existente")
         }
 
         if (busy) {
-            CircularProgressIndicator()
-            Text("Leyendo albarán con OCR…")
+            item {
+                StatusPanel(
+                    title = "Analizando documento",
+                    message = "OCR en curso. Estamos localizando ALBARÁN, ARTÍCULO y CANTIDAD.",
+                    tone = StatusTone.INFO,
+                    loading = true
+                )
+            }
         }
+
         if (!error.isNullOrBlank()) {
-            Text(error.orEmpty(), color = MaterialTheme.colorScheme.error)
+            item {
+                StatusPanel(
+                    title = "No se pudo leer la captura",
+                    message = error.orEmpty(),
+                    tone = StatusTone.ERROR
+                )
+            }
         }
 
-        HorizontalDivider()
-        Text(
-            text = "Formato de comprobación incluido: albarán 300712 · referencia MTP11301N · cantidad 4.",
-            style = MaterialTheme.typography.bodySmall
-        )
-    }
-}
+        item {
+            OutlinedButton(
+                enabled = !busy && !syncBusy,
+                modifier = Modifier.fillMaxWidth(),
+                onClick = {
+                    runCatching { imageLauncher.launch(arrayOf("image/*")) }
+                        .onFailure { cause -> vm.reportUiError("No se pudo abrir el selector de imágenes", cause) }
+                }
+            ) {
+                Icon(Icons.Default.Image, contentDescription = null)
+                Spacer(Modifier.size(8.dp))
+                Text("Usar una fotografía existente")
+            }
+        }
 
-private fun createPhotoUri(context: Context): Uri {
-    val directory = File(context.cacheDir, "delivery_notes")
-    if (!directory.exists() && !directory.mkdirs()) {
-        error("No se puede preparar la carpeta temporal de fotografías")
+        item {
+            Card(
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(7.dp)) {
+                    Text("Criterios de lectura", fontWeight = FontWeight.Bold)
+                    Text("• Nº de albarán: primer valor válido inmediatamente debajo de ALBARÁN.", style = MaterialTheme.typography.bodySmall)
+                    Text("• Referencias: únicamente valores situados debajo de ARTÍCULO.", style = MaterialTheme.typography.bodySmall)
+                    Text("• Cantidad: se cruza por la misma línea horizontal con CANTIDAD.", style = MaterialTheme.typography.bodySmall)
+                    Text("• Antes de crear la salida siempre existe una pantalla de revisión.", style = MaterialTheme.typography.bodySmall)
+                }
+            }
+        }
     }
-
-    // Las fotos solo sirven para el OCR. Limitamos la caché para que una jornada con muchos
-    // albaranes no acumule cientos de imágenes de cámara.
-    runCatching {
-        directory.listFiles()
-            ?.filter { it.isFile && it.name.startsWith("albaran_") }
-            ?.sortedByDescending { it.lastModified() }
-            ?.drop(3)
-            ?.forEach { it.delete() }
-    }
-
-    val file = File(directory, "albaran_${System.currentTimeMillis()}.jpg")
-    return FileProvider.getUriForFile(
-        context,
-        "${BuildConfig.APPLICATION_ID}.fileprovider",
-        file
-    )
 }
 
 @Composable
@@ -663,6 +1139,16 @@ private fun ReviewDeliveryNoteScreen(vm: SgaViewModel, nav: NavHostController) {
         contentPadding = PaddingValues(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
+        item {
+            ProcessHeader(
+                eyebrow = "CONTROL DE DOCUMENTO",
+                title = "Validar lectura OCR",
+                subtitle = "Confirma el albarán y las líneas antes de generar la orden de picking. Ningún dato OCR afecta al stock sin esta validación."
+            )
+        }
+        item {
+            WorkflowStepper(current = 1, labels = listOf("Documento", "Picking", "Transporte", "Cierre"))
+        }
         item {
             OutlinedTextField(
                 value = current.number,
@@ -846,20 +1332,39 @@ private fun PickingScreen(
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         item {
-            Text(
-                text = "Albarán ${data.note.number}",
-                style = MaterialTheme.typography.headlineSmall,
-                fontWeight = FontWeight.Bold
+            ProcessHeader(
+                eyebrow = if (completed) "EXPEDICIÓN FINALIZADA" else "ORDEN DE SALIDA",
+                title = "Albarán ${data.note.number}",
+                subtitle = data.note.customer.ifBlank { "Preparación guiada por EAN con control de cantidades y trazabilidad." }
             )
-            if (data.note.customer.isNotBlank()) Text(data.note.customer)
-            Text(
-                text = if (completed) "FINALIZADO" else "PENDIENTE",
-                color = if (completed) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.secondary,
-                fontWeight = FontWeight.Bold
-            )
-            Spacer(Modifier.height(8.dp))
-            LinearProgressIndicator(progress = { progress }, modifier = Modifier.fillMaxWidth())
-            Text("$totalPicked / $totalExpected unidades")
+        }
+        item {
+            val currentStep = when {
+                completed -> 4
+                !pickingDone -> 2
+                else -> 3
+            }
+            WorkflowStepper(current = currentStep, labels = listOf("Documento", "Picking", "Transporte", "Cierre"))
+        }
+        item {
+            Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow)) {
+                Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(7.dp)) {
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                        Text(if (completed) "Completado" else "Progreso de preparación", fontWeight = FontWeight.Bold)
+                        Text("$totalPicked / $totalExpected uds.", fontWeight = FontWeight.Bold)
+                    }
+                    LinearProgressIndicator(progress = { progress }, modifier = Modifier.fillMaxWidth())
+                    Text(
+                        when {
+                            completed -> "Salida cerrada con ${data.transportLabels.size} etiqueta(s) de transporte."
+                            pickingDone -> "Picking completo. Escanea las etiquetas de transporte para habilitar el cierre."
+                            else -> "Escanea el EAN del siguiente producto y confirma las unidades."
+                        },
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
         }
 
         items(data.lines, key = { it.id }) { line ->
@@ -895,7 +1400,7 @@ private fun PickingScreen(
 
         if (!completed && !pickingDone) {
             item {
-                Text("1. Picking de productos", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                Text("Picking de productos", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
                 Text(
                     "El albarán contiene el CÓDIGO del artículo. La aplicación busca ese CÓDIGO en Google Sheets, obtiene su EAN y solo acepta el código de barras que pertenezca a ese artículo. Al escanear podrás indicar manualmente cuántas unidades quieres añadir.",
                     style = MaterialTheme.typography.bodySmall
@@ -930,9 +1435,16 @@ private fun PickingScreen(
                     OutlinedTextField(
                         value = manualBarcode,
                         onValueChange = { manualBarcode = it.filter(Char::isLetterOrDigit).uppercase() },
-                        label = { Text("EAN manual (emergencia)") },
+                        label = { Text("EAN manual / escáner físico") },
                         modifier = Modifier.weight(1f),
-                        singleLine = true
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                        keyboardActions = KeyboardActions(onDone = {
+                            if (manualBarcode.isNotBlank() && !scanBusy && pendingProductScan == null) {
+                                vm.submitBarcode(noteId, manualBarcode)
+                                manualBarcode = ""
+                            }
+                        })
                     )
                     FilledTonalButton(
                         enabled = manualBarcode.isNotBlank() && !scanBusy && pendingProductScan == null,
@@ -976,7 +1488,7 @@ private fun PickingScreen(
                 Spacer(Modifier.height(4.dp))
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Icon(Icons.Default.LocalShipping, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
-                    Text("2. Etiquetas de transporte", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                    Text("Etiquetas de transporte", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
                 }
                 Text(
                     "El picking está completo. Escanea ahora todas las etiquetas de transporte del envío. Puedes registrar varias; no se admiten duplicadas.",
@@ -1000,9 +1512,16 @@ private fun PickingScreen(
                     OutlinedTextField(
                         value = manualTransportBarcode,
                         onValueChange = { manualTransportBarcode = it.uppercase() },
-                        label = { Text("Etiqueta manual (emergencia)") },
+                        label = { Text("Etiqueta manual / escáner físico") },
                         modifier = Modifier.weight(1f),
-                        singleLine = true
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                        keyboardActions = KeyboardActions(onDone = {
+                            if (manualTransportBarcode.isNotBlank() && !scanBusy) {
+                                vm.submitTransportLabel(noteId, manualTransportBarcode)
+                                manualTransportBarcode = ""
+                            }
+                        })
                     )
                     FilledTonalButton(
                         enabled = manualTransportBarcode.isNotBlank() && !scanBusy,
@@ -1163,8 +1682,15 @@ private fun HistoryScreen(vm: SgaViewModel, nav: NavHostController) {
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
         contentPadding = PaddingValues(16.dp),
-        verticalArrangement = Arrangement.spacedBy(8.dp)
+        verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
+        item {
+            ProcessHeader(
+                eyebrow = "AUDITORÍA DE SALIDAS",
+                title = "Historial",
+                subtitle = "Consulta albaranes pendientes y finalizados junto con sus lecturas y etiquetas de transporte."
+            )
+        }
         if (history.isEmpty()) {
             item { Text("Todavía no hay albaranes registrados.") }
         }

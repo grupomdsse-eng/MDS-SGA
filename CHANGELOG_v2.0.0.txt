@@ -1,0 +1,25 @@
+SGA MDS 2.0.0
+==============
+
+CORRECCIONES
+- Sustituida captura externa TakePicture + FileProvider por CameraX ImageCapture integrado.
+- El OCR abre directamente el archivo privado capturado.
+- Validacion de archivo no vacio antes de OCR.
+- La camara documental se desmonta durante el OCR para bajar consumo de memoria.
+- Proteccion frente a callbacks de camara despues de abandonar la pantalla.
+
+INTERFAZ
+- Nuevo Centro operativo.
+- Navegacion inferior profesional.
+- KPI de pendientes, expedidos hoy, stock total y stock critico.
+- Avisos de referencias sin EAN y stock critico.
+- Cabeceras de proceso e indicadores visuales de etapa.
+- Cola de operaciones de salida.
+- Mejora visual de picking y expedicion.
+
+FUNCIONALIDADES
+- Movimientos de stock consultables y buscables.
+- Recuento fisico por EAN con ajuste auditado.
+- Entrada manual preparada para escaner fisico tipo keyboard wedge y Enter.
+- Se mantienen Google Sheets, OCR posicional, codigo->EAN, cantidades manuales,
+  etiquetas de transporte y cierre condicionado.

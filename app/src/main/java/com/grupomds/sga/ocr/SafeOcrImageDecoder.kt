@@ -5,7 +5,10 @@ import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.net.Uri
 import androidx.exifinterface.media.ExifInterface
+import java.io.File
+import java.io.FileInputStream
 import java.io.IOException
+import java.io.InputStream
 import kotlin.math.max
 
 /**
@@ -25,12 +28,11 @@ object SafeOcrImageDecoder {
         val rotationDegrees: Int
     )
 
-    fun decode(context: Context, uri: Uri): DecodedImage {
-        val resolver = context.contentResolver
+    fun decode(context: Context, uri: Uri, localFilePath: String? = null): DecodedImage {
         val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-        resolver.openInputStream(uri)?.use { input ->
+        openInput(context, uri, localFilePath).use { input ->
             BitmapFactory.decodeStream(input, null, bounds)
-        } ?: throw IOException("No se puede abrir la fotografía")
+        }
 
         if (bounds.outWidth <= 0 || bounds.outHeight <= 0) {
             throw IOException("La fotografía no tiene un tamaño válido")
@@ -49,13 +51,13 @@ object SafeOcrImageDecoder {
             }
 
             try {
-                val bitmap = resolver.openInputStream(uri)?.use { input ->
+                val bitmap = openInput(context, uri, localFilePath).use { input ->
                     BitmapFactory.decodeStream(input, null, options)
                 } ?: throw IOException("No se ha podido decodificar la fotografía")
 
                 return DecodedImage(
                     bitmap = bitmap,
-                    rotationDegrees = readRotation(context, uri)
+                    rotationDegrees = readRotation(context, uri, localFilePath)
                 )
             } catch (oom: OutOfMemoryError) {
                 // Un móvil con poca RAM puede fallar incluso tras el primer muestreo. Reintentamos
@@ -74,9 +76,24 @@ object SafeOcrImageDecoder {
         )
     }
 
-    private fun readRotation(context: Context, uri: Uri): Int {
+    private fun openInput(context: Context, uri: Uri, localFilePath: String?): InputStream {
+        val directFile = localFilePath?.let(::File)
+            ?: if (uri.scheme.equals("file", ignoreCase = true)) uri.path?.let(::File) else null
+
+        if (directFile != null) {
+            if (!directFile.exists() || directFile.length() <= 0L) {
+                throw IOException("La fotografía capturada no existe o está vacía")
+            }
+            return FileInputStream(directFile)
+        }
+
+        return context.contentResolver.openInputStream(uri)
+            ?: throw IOException("No se puede abrir la fotografía seleccionada")
+    }
+
+    private fun readRotation(context: Context, uri: Uri, localFilePath: String?): Int {
         return runCatching {
-            context.contentResolver.openInputStream(uri)?.use { input ->
+            openInput(context, uri, localFilePath).use { input ->
                 when (ExifInterface(input).getAttributeInt(
                     ExifInterface.TAG_ORIENTATION,
                     ExifInterface.ORIENTATION_NORMAL
@@ -86,7 +103,7 @@ object SafeOcrImageDecoder {
                     ExifInterface.ORIENTATION_ROTATE_270 -> 270
                     else -> 0
                 }
-            } ?: 0
+            }
         }.getOrDefault(0)
     }
 }

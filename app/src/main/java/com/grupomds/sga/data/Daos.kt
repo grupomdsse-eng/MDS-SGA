@@ -89,4 +89,7 @@ interface StockMovementDao {
 
     @Query("SELECT * FROM stock_movements ORDER BY createdAt DESC, id DESC LIMIT :limit")
     suspend fun recent(limit: Int = 100): List<StockMovementEntity>
+
+    @Query("SELECT * FROM stock_movements ORDER BY createdAt DESC, id DESC LIMIT :limit")
+    fun observeRecent(limit: Int = 200): Flow<List<StockMovementEntity>>
 }

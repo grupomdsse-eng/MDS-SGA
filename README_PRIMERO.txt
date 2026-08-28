@@ -1,63 +1,60 @@
-SGA MDS - VERSION 1.3.2 - GOOGLE SHEETS + PICKING + TRANSPORTE
-===============================================================
+SGA MDS - VERSION 2.0.0 - EDICION PROFESIONAL
+==============================================
 
-NOVEDADES PRINCIPALES
----------------------
-1) STOCK Y EAN DESDE GOOGLE SHEETS
-   Hoja configurada:
-   https://docs.google.com/spreadsheets/d/1HmU9IPRGRWte1iXxUvYaoBc4jEmvNncHvMviI2Ggt3c/edit?gid=0#gid=0
+CORRECCION PRINCIPAL DE ESTA VERSION
+------------------------------------
+La foto del albaran YA NO se realiza abriendo la aplicacion de camara externa.
+SGA MDS incorpora una camara documental CameraX dentro de la propia aplicacion.
 
-   La app sincroniza automaticamente al abrir y tambien dispone de boton SINCRONIZAR.
-   Reconoce columnas CÓDIGO/REFERENCIA/ARTÍCULO, EAN, DESCRIPCIÓN, STOCK y UBICACIÓN.
+La captura se guarda directamente en la carpeta privada de la app y el OCR abre
+el archivo local real. Esto elimina la dependencia de permisos temporales de una
+app de camara externa que podia producir: "No se puede abrir la fotografia".
 
-   IMPORTANTE: para descarga directa sin login, la hoja debe permitir lectura mediante enlace.
+NUEVA INTERFAZ PROFESIONAL
+--------------------------
+- Centro operativo con KPI y avisos.
+- Navegacion inferior: Inicio / Operaciones / Stock / Historial.
+- Cola de operaciones pendientes.
+- Flujo visual: Documento -> Picking -> Transporte -> Cierre.
+- Camara documental con guia A4, flash e instrucciones.
+- Movimientos de stock y trazabilidad.
+- Recuento fisico por EAN.
+- Entrada compatible con lector fisico tipo teclado + Enter.
 
-2) RELACION CODIGO -> EAN
-   - En el albaran se lee el CÓDIGO situado debajo de ARTÍCULO.
-   - Ese CÓDIGO se busca en el maestro de Google Sheets.
-   - La app obtiene el EAN del producto.
-   - En picking SOLO acepta el EAN relacionado con ese CÓDIGO.
-   - Ya no se autoasignan EAN desconocidos durante el picking.
+FLUJO DE SALIDA
+---------------
+1) Sincroniza Google Sheets.
+2) Fotografia el albaran desde la camara integrada.
+3) Revisa numero, referencias y cantidades detectadas.
+4) Confirma el albaran.
+5) Escanea EAN de producto.
+6) Indica manualmente las unidades.
+7) Completa todas las lineas.
+8) Escanea etiqueta(s) de transporte.
+9) Finaliza y cierra.
 
-3) UNIDADES MANUALES DESPUES DE ESCANEAR
-   - Escanea el EAN.
-   - Se abre una ventana con producto, EAN, picado y pendientes.
-   - Introduce 1, 2, 3... unidades.
-   - Nunca permite superar la cantidad del albaran.
+GOOGLE SHEETS
+-------------
+https://docs.google.com/spreadsheets/d/1HmU9IPRGRWte1iXxUvYaoBc4jEmvNncHvMviI2Ggt3c/edit?gid=0#gid=0
 
-4) ETIQUETAS DE TRANSPORTE OBLIGATORIAS
-   - Al completar los productos aparece automaticamente el escaner de transporte.
-   - Permite registrar varias etiquetas.
-   - Evita duplicados.
-   - No deja finalizar el albaran hasta registrar al menos una etiqueta.
-   - Las etiquetas quedan guardadas con el albaran.
+El albaran contiene CÓDIGO. Google Sheets relaciona CÓDIGO -> EAN.
+El picking se valida escaneando EAN.
 
-5) OCR DEL ALBARAN
-   - Numero: valor situado debajo de ALBARÁN.
-   - Referencia: solo valores de la columna situada debajo de ARTÍCULO.
-   - Cantidad: columna CANTIDAD de la misma fila.
-
-6) ESTABILIDAD
-   - CameraX usa KEEP_ONLY_LATEST.
-   - Un codigo quieto no crea lecturas infinitas.
-   - Operaciones de lectura serializadas con Mutex.
-   - Camera, scanner y executor se liberan al salir.
-   - OCR con timeout y fuera del hilo de interfaz.
-   - Migracion Room 1 -> 2 sin borrar historial.
+REGLAS OCR
+----------
+- Numero: debajo de ALBARAN.
+- Referencia: solo debajo de ARTICULO.
+- Cantidad: misma fila en CANTIDAD.
 
 PARA SUBIR A GITHUB
 -------------------
-1) Extrae el ZIP completo.
-2) NO subas el ZIP como un unico archivo.
-3) Abre la carpeta extraida y comprueba que ves .github, app, gradle, docs y sample.
+1) Extrae el ZIP.
+2) No subas el ZIP como archivo unico.
+3) Comprueba que en la raiz ves .github, app, gradle, docs y sample.
 4) Ejecuta SUBIR_A_GITHUB.bat o usa GitHub Desktop.
-5) En GitHub: Actions -> Build Android APK -> Run workflow.
+5) GitHub -> Actions -> Build Android APK -> Run workflow.
 
-ALBARAN DE PRUEBA
------------------
-Numero: 300712
-Referencia/Codigo: MTP11301N
-Cantidad: 4
-
-
-ESTABILIDAD 1.3.2: OCR con memoria limitada, cámara protegida frente a carreras/excepciones, corrutinas controladas y diagnóstico local de cierres fatales.
+VERSION
+-------
+versionCode: 7
+versionName: 2.0.0
