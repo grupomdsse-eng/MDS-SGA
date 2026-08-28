@@ -15,6 +15,17 @@ class SgaRepositoryNormalizationTest {
     }
 
     @Test
+    fun doesNotExpandAbsurdScientificExponent() {
+        assertEquals("1E999", SgaRepository.normalizeBarcode("1E+999"))
+    }
+
+    @Test
+    fun capsPathologicalBarcodeLength() {
+        val normalized = SgaRepository.normalizeBarcode("9".repeat(10_000))
+        assertEquals(128, normalized.length)
+    }
+
+    @Test
     fun normalizesReferenceForMatching() {
         assertEquals("MTP11301N", SgaRepository.normalizeReference(" mtp11301n "))
     }

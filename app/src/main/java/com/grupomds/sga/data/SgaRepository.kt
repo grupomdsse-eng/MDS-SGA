@@ -462,6 +462,10 @@ class SgaRepository(private val db: SgaDatabase) {
         var imported = 0
         var updated = 0
         val errors = mutableListOf<String>()
+        var suppressedErrors = 0
+        fun addImportWarning(message: String) {
+            if (errors.size < 100) errors += message else suppressedErrors++
+        }
         val eanSeenInSheet = mutableMapOf<String, String>()
 
         dataRows.forEachIndexed { index, row ->
@@ -475,7 +479,7 @@ class SgaRepository(private val db: SgaDatabase) {
             if (ean != null) {
                 val previousSheetOwner = eanSeenInSheet[ean]
                 if (previousSheetOwner != null && previousSheetOwner != reference) {
-                    errors += "Fila $lineNumber ($reference): EAN $ean duplicado también en $previousSheetOwner. Se importa la referencia, pero hay que corregir el EAN en Google Sheets."
+                    addImportWarning("Fila $lineNumber ($reference): EAN $ean duplicado también en $previousSheetOwner. Se importa la referencia, pero hay que corregir el EAN en Google Sheets.")
                     ean = null
                 } else {
                     eanSeenInSheet[ean] = reference
@@ -487,16 +491,16 @@ class SgaRepository(private val db: SgaDatabase) {
                 if (localOwner != null && localOwner.reference != reference) {
                     if (localOwner.reference !in sheetReferences) {
                         products.clearEan(localOwner.reference)
-                        errors += "Fila $lineNumber ($reference): EAN $ean reasignado desde la referencia antigua ${localOwner.reference}."
+                        addImportWarning("Fila $lineNumber ($reference): EAN $ean reasignado desde la referencia antigua ${localOwner.reference}.")
                     } else {
-                        errors += "Fila $lineNumber ($reference): EAN $ean ya pertenece a ${localOwner.reference}. Se importa la referencia, pero sin cambiar ese EAN hasta corregir la hoja."
+                        addImportWarning("Fila $lineNumber ($reference): EAN $ean ya pertenece a ${localOwner.reference}. Se importa la referencia, pero sin cambiar ese EAN hasta corregir la hoja.")
                         ean = null
                     }
                 }
             }
 
             if (ean == null && existing?.ean.isNullOrBlank()) {
-                errors += "Fila $lineNumber ($reference): sin EAN válido; la referencia sí se ha importado, pero no podrá picarse hasta tener EAN."
+                addImportWarning("Fila $lineNumber ($reference): sin EAN válido; la referencia sí se ha importado, pero no podrá picarse hasta tener EAN.")
             }
 
             val incomingStockRaw = valueAt(row, stockIndex)
@@ -504,11 +508,11 @@ class SgaRepository(private val db: SgaDatabase) {
             val incomingSheetStock = when {
                 incomingStockRaw.isBlank() -> existing?.sheetStock
                 parsedSheetStock == null -> {
-                    errors += "Fila $lineNumber ($reference): stock no válido '$incomingStockRaw'. Se mantiene el stock anterior, pero la referencia sí se importa."
+                    addImportWarning("Fila $lineNumber ($reference): stock no válido '$incomingStockRaw'. Se mantiene el stock anterior, pero la referencia sí se importa.")
                     existing?.sheetStock
                 }
                 parsedSheetStock < 0 -> {
-                    errors += "Fila $lineNumber ($reference): stock negativo no permitido. Se mantiene el stock anterior, pero la referencia sí se importa."
+                    addImportWarning("Fila $lineNumber ($reference): stock negativo no permitido. Se mantiene el stock anterior, pero la referencia sí se importa.")
                     existing?.sheetStock
                 }
                 else -> parsedSheetStock
@@ -527,11 +531,11 @@ class SgaRepository(private val db: SgaDatabase) {
             }
             val effectiveStock = calculatedStock.coerceAtLeast(0)
             if (calculatedStock < 0) {
-                errors += "Fila $lineNumber ($reference): las salidas locales superan el stock de la hoja; stock SGA ajustado a 0."
+                addImportWarning("Fila $lineNumber ($reference): las salidas locales superan el stock de la hoja; stock SGA ajustado a 0.")
             }
 
-            val descriptionFromSheet = if (descIndex >= 0) valueAt(row, descIndex) else ""
-            val locationFromSheet = if (locationIndex >= 0) valueAt(row, locationIndex) else ""
+            val descriptionFromSheet = if (descIndex >= 0) valueAt(row, descIndex).take(500) else ""
+            val locationFromSheet = if (locationIndex >= 0) valueAt(row, locationIndex).take(120) else ""
             val description = descriptionFromSheet.ifBlank { existing?.description ?: "Producto $reference" }
             val location = locationFromSheet.ifBlank { existing?.location.orEmpty() }
             val now = System.currentTimeMillis()
@@ -577,6 +581,10 @@ class SgaRepository(private val db: SgaDatabase) {
             }
         }
 
+        if (suppressedErrors > 0) {
+            errors += "… $suppressedErrors avisos adicionales omitidos para proteger la memoria."
+        }
+
         CsvImportResult(
             imported = imported,
             updated = updated,
@@ -592,7 +600,7 @@ class SgaRepository(private val db: SgaDatabase) {
          * Elimina BOM, NBSP, espacios de ancho cero, comillas y signos ajenos al código.
          */
         fun normalizeReference(value: String): String {
-            val normalized = Normalizer.normalize(value, Normalizer.Form.NFKC)
+            val normalized = Normalizer.normalize(value.take(256), Normalizer.Form.NFKC)
                 .trim()
                 .trim('"', '\'', '`')
                 .uppercase()
@@ -607,16 +615,21 @@ class SgaRepository(private val db: SgaDatabase) {
         }
 
         fun normalizeBarcode(value: String): String {
-            var cleaned = Normalizer.normalize(value, Normalizer.Form.NFKC)
+            var cleaned = Normalizer.normalize(value.take(256), Normalizer.Form.NFKC)
                 .trim()
                 .trim('"', '\'', ' ')
             if (cleaned.isBlank()) return ""
 
-            if (cleaned.contains('E', ignoreCase = true)) {
-                val scientificCandidate = cleaned.replace(',', '.')
-                if (scientificCandidate.toBigDecimalOrNull() != null) {
+            // Google Sheets puede exportar un EAN numérico en notación científica. Solo
+            // expandimos exponentes razonables para impedir que un valor corrupto del tipo
+            // 1E+1000000 provoque una asignación de memoria gigantesca.
+            val scientific = cleaned.replace(',', '.')
+            if (scientific.matches(Regex("[+-]?\\d{1,18}(?:\\.\\d{0,12})?[eE][+-]?\\d{1,3}"))) {
+                val exponent = scientific.substringAfterLast('E', scientific.substringAfterLast('e', "0"))
+                    .toIntOrNull()
+                if (exponent != null && exponent in -30..30) {
                     cleaned = try {
-                        BigDecimal(scientificCandidate).toPlainString()
+                        BigDecimal(scientific).toPlainString().take(128)
                     } catch (_: NumberFormatException) {
                         cleaned
                     }
@@ -627,16 +640,17 @@ class SgaRepository(private val db: SgaDatabase) {
                 cleaned = cleaned.substringBefore('.')
             }
 
-            return cleaned.filter { it.isLetterOrDigit() }.uppercase()
+            return cleaned.filter { it.isLetterOrDigit() }.uppercase().take(128)
         }
 
         fun normalizeTransportBarcode(value: String): String = value
+            .take(2_000)
             .trim()
             .filterNot(Char::isISOControl)
             .take(500)
 
         private fun parseStock(value: String): Int? {
-            val normalized = value
+            val normalized = value.take(128)
                 .replace("\u00A0", "")
                 .replace(" ", "")
                 .trim()
@@ -736,7 +750,7 @@ class SgaRepository(private val db: SgaDatabase) {
         }
 
         private fun normalizeHeader(value: String): String {
-            val noAccents = Normalizer.normalize(value.trim().lowercase(), Normalizer.Form.NFD)
+            val noAccents = Normalizer.normalize(value.take(256).trim().lowercase(), Normalizer.Form.NFD)
                 .replace(Regex("\\p{Mn}+"), "")
             return noAccents
                 .replace("\uFEFF", "")

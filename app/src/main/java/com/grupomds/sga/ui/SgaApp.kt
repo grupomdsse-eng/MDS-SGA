@@ -299,14 +299,7 @@ private fun InventoryScreen(vm: SgaViewModel) {
     var showNew by remember { mutableStateOf(false) }
 
     val csvLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
-        if (uri != null) {
-            runCatching {
-                context.contentResolver.openInputStream(uri)
-                    ?.bufferedReader(Charsets.UTF_8)
-                    ?.use { it.readText() }
-                    .orEmpty()
-            }.onSuccess(vm::importCsv)
-        }
+        if (uri != null) vm.importCsv(uri)
     }
 
     val visible = remember(products, search) {
@@ -584,9 +577,13 @@ private fun ScanDeliveryNoteScreen(vm: SgaViewModel, nav: NavHostController) {
             enabled = !busy && !syncBusy,
             onClick = {
                 vm.clearOcrError()
-                val uri = createPhotoUri(context)
-                photoUri = uri
-                cameraLauncher.launch(uri)
+                runCatching {
+                    val uri = createPhotoUri(context)
+                    photoUri = uri
+                    cameraLauncher.launch(uri)
+                }.onFailure { error ->
+                    vm.reportUiError("No se pudo abrir la cámara para fotografiar el albarán", error)
+                }
             }
         ) {
             Icon(Icons.Default.CameraAlt, contentDescription = null)
@@ -596,7 +593,10 @@ private fun ScanDeliveryNoteScreen(vm: SgaViewModel, nav: NavHostController) {
 
         OutlinedButton(
             enabled = !busy && !syncBusy,
-            onClick = { imageLauncher.launch(arrayOf("image/*")) }
+            onClick = {
+                runCatching { imageLauncher.launch(arrayOf("image/*")) }
+                    .onFailure { error -> vm.reportUiError("No se pudo abrir el selector de imágenes", error) }
+            }
         ) {
             Icon(Icons.Default.Image, contentDescription = null)
             Spacer(Modifier.size(8.dp))
@@ -620,7 +620,10 @@ private fun ScanDeliveryNoteScreen(vm: SgaViewModel, nav: NavHostController) {
 }
 
 private fun createPhotoUri(context: Context): Uri {
-    val directory = File(context.cacheDir, "delivery_notes").apply { mkdirs() }
+    val directory = File(context.cacheDir, "delivery_notes")
+    if (!directory.exists() && !directory.mkdirs()) {
+        error("No se puede preparar la carpeta temporal de fotografías")
+    }
 
     // Las fotos solo sirven para el OCR. Limitamos la caché para que una jornada con muchos
     // albaranes no acumule cientos de imágenes de cámara.
@@ -628,7 +631,7 @@ private fun createPhotoUri(context: Context): Uri {
         directory.listFiles()
             ?.filter { it.isFile && it.name.startsWith("albaran_") }
             ?.sortedByDescending { it.lastModified() }
-            ?.drop(8)
+            ?.drop(3)
             ?.forEach { it.delete() }
     }
 
@@ -647,12 +650,6 @@ private fun ReviewDeliveryNoteScreen(vm: SgaViewModel, nav: NavHostController) {
     val syncBusy by vm.syncBusy.collectAsStateWithLifecycle()
     val syncStatus by vm.syncStatus.collectAsStateWithLifecycle()
     val current = draft
-
-    // Refresca el maestro también al entrar en la revisión. Si un código se acaba de añadir
-    // al Google Sheet, aparecerá relacionado sin tener que reiniciar la aplicación.
-    LaunchedEffect(Unit) {
-        vm.syncStockFromGoogleSheet(showMessage = false)
-    }
 
     if (current == null) {
         Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {

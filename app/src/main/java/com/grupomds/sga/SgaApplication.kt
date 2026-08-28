@@ -7,4 +7,9 @@ import com.grupomds.sga.data.SgaRepository
 class SgaApplication : Application() {
     val database by lazy { SgaDatabase.get(this) }
     val repository by lazy { SgaRepository(database) }
+
+    override fun onCreate() {
+        super.onCreate()
+        AppCrashReporter.install(this)
+    }
 }

@@ -1,4 +1,4 @@
-SGA MDS - VERSION 1.3.1 - GOOGLE SHEETS + PICKING + TRANSPORTE
+SGA MDS - VERSION 1.3.2 - GOOGLE SHEETS + PICKING + TRANSPORTE
 ===============================================================
 
 NOVEDADES PRINCIPALES
@@ -58,3 +58,6 @@ ALBARAN DE PRUEBA
 Numero: 300712
 Referencia/Codigo: MTP11301N
 Cantidad: 4
+
+
+ESTABILIDAD 1.3.2: OCR con memoria limitada, cámara protegida frente a carreras/excepciones, corrutinas controladas y diagnóstico local de cierres fatales.

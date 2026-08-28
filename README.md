@@ -1,5 +1,9 @@
-# SGA MDS — Android 1.3.1
+# SGA MDS — Android 1.3.2
 
+
+## Estabilización 1.3.2: cierres inesperados
+
+Esta versión refuerza específicamente el funcionamiento prolongado: reduce la memoria usada por las fotos OCR, reutiliza el reconocedor de texto, protege el analizador de CameraX frente a excepciones y carreras al cerrar la pantalla, evita sincronizaciones automáticas duplicadas y captura las excepciones asíncronas para que no terminen el proceso. Si aun así Android detecta un fallo fatal, se guarda un diagnóstico local y en el siguiente arranque se muestra un aviso con el motivo resumido.
 
 ## Corrección 1.3.1: referencias nuevas de Google Sheets
 
@@ -65,7 +69,7 @@ EAN: 8430000000001
 
 el picking solo acepta `8430000000001` para esa referencia.
 
-La versión 1.3.1 **no autoasigna EAN desconocidos** al escanear, porque eso podría relacionar un código de barras incorrecto con un artículo.
+La aplicación **no autoasigna EAN desconocidos** al escanear, porque eso podría relacionar un código de barras incorrecto con un artículo.
 
 ## Unidades manuales
 
@@ -118,15 +122,22 @@ Reglas principales:
 
 La aplicación incluye medidas para uso prolongado:
 
-- `ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST`.
+- `ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST`: no acumula fotogramas de cámara; el análisis de códigos se limita a 1280×720 para reducir consumo sostenido.
+- El analizador de códigos protege `InputImage`, `scanner.process()` y callbacks; un error de CameraX/ML Kit se registra y el siguiente fotograma puede continuar.
+- El scanner no se cierra mientras exista una tarea ML Kit activa, evitando carreras al cambiar de pantalla.
 - Un código quieto no genera lecturas repetidas continuamente.
 - Validaciones y escrituras de picking serializadas con `Mutex`.
-- El analizador, CameraX, ML Kit y el executor se liberan al abandonar la pantalla.
-- OCR fuera del hilo principal.
-- Timeout de 25 segundos para OCR problemático.
+- El executor y los casos de uso CameraX se liberan al abandonar la pantalla.
+- El OCR reutiliza un único reconocedor de texto y se cierra al destruir el `ViewModel`.
+- Las fotografías de 12–50 MP se decodifican a un máximo aproximado de 1.800 px antes del OCR; la rotación EXIF se entrega a ML Kit sin crear una segunda copia del bitmap.
+- La memoria del bitmap se libera después de que ML Kit termina la lectura.
+- OCR, lectura de CSV y descargas fuera del hilo principal.
+- Timeout de 25 segundos para OCR problemático y límites de tamaño para CSV/Google Sheets.
 - Limpieza de fotografías temporales antiguas.
-- Operaciones de Room transaccionales.
-- Migración de base de datos `1 → 2` sin borrar historial existente.
+- Las corrutinas del `ViewModel` tienen una barrera de excepciones para que un fallo asíncrono controlable no cierre la app.
+- Los flujos Room de inventario e historial registran errores en lugar de propagarlos sin control.
+- Registro local de diagnóstico del último fallo fatal, sin enviar datos fuera del dispositivo.
+- Operaciones de Room transaccionales y migración `1 → 2` sin borrar historial existente.
 - Prevención de albaranes y etiquetas duplicadas.
 
 ## Proyecto listo para GitHub
@@ -160,12 +171,12 @@ El workflow está en:
 
 `.github/workflows/build-apk.yml`
 
-En GitHub entra en **Actions → Build Android APK → Run workflow**. Ejecuta tests y compila `app-debug.apk`, que se publica como artefacto `SGA-MDS-1.3.1-debug-apk`.
+En GitHub entra en **Actions → Build Android APK → Run workflow**. Ejecuta tests y compila `app-debug.apk`, que se publica como artefacto `SGA-MDS-1.3.2-debug-apk`.
 
 ## Versiones
 
-- `versionCode = 5`
-- `versionName = 1.3.1`
+- `versionCode = 6`
+- `versionName = 1.3.2`
 - `minSdk = 26`
 - `targetSdk = 35`
 - Java 17

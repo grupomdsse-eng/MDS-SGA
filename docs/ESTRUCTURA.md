@@ -1,7 +1,7 @@
-# Estructura del proyecto SGA MDS 1.3.1
+# Estructura del proyecto SGA MDS 1.3.2
 
 ```text
-SGA_MDS_GitHub_Ready_v3/
+SGA_MDS_GitHub_Ready_v3_2/
 ├── .github/
 │   └── workflows/
 │       └── build-apk.yml
@@ -11,6 +11,7 @@ SGA_MDS_GitHub_Ready_v3/
 │       ├── main/
 │       │   ├── AndroidManifest.xml
 │       │   ├── java/com/grupomds/sga/
+│       │   │   ├── AppCrashReporter.kt
 │       │   │   ├── MainActivity.kt
 │       │   │   ├── SgaApplication.kt
 │       │   │   ├── data/
@@ -20,7 +21,8 @@ SGA_MDS_GitHub_Ready_v3/
 │       │   │   │   ├── SgaDatabase.kt
 │       │   │   │   └── SgaRepository.kt
 │       │   │   ├── ocr/
-│       │   │   │   └── DeliveryNoteParser.kt
+│       │   │   │   ├── DeliveryNoteParser.kt
+│       │   │   │   └── SafeOcrImageDecoder.kt
 │       │   │   └── ui/
 │       │   │       ├── BarcodeCamera.kt
 │       │   │       ├── SgaApp.kt
