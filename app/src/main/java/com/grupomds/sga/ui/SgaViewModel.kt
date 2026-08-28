@@ -32,6 +32,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
@@ -63,6 +64,7 @@ class SgaViewModel(application: Application) : AndroidViewModel(application) {
     private val _scanBusy = MutableStateFlow(false)
     val scanBusy = _scanBusy.asStateFlow()
     private val scanMutex = Mutex()
+    private val syncMutex = Mutex()
 
     private val _pendingProductScan = MutableStateFlow<ProductScanCandidate?>(null)
     val pendingProductScan = _pendingProductScan.asStateFlow()
@@ -99,23 +101,37 @@ class SgaViewModel(application: Application) : AndroidViewModel(application) {
 
     fun syncStockFromGoogleSheet(showMessage: Boolean = true) {
         if (_syncBusy.value) return
-        _syncBusy.value = true
-        _syncStatus.value = "Sincronizando Google Sheets…"
         viewModelScope.launch {
+            performGoogleSheetSync(showMessage = showMessage)
+        }
+    }
+
+    /**
+     * Serializa todas las sincronizaciones. Así, si la sincronización automática de arranque
+     * sigue en curso y el operario intenta crear un albarán, la validación espera a que termine
+     * en lugar de consultar una base de datos todavía incompleta.
+     */
+    private suspend fun performGoogleSheetSync(showMessage: Boolean): Result<CsvImportResult> {
+        return syncMutex.withLock {
+            _syncBusy.value = true
+            _syncStatus.value = "Sincronizando Google Sheets…"
             try {
-                val csv = withTimeout(15_000L) { GoogleSheetStockSource.downloadCsv() }
+                val csv = withTimeout(18_000L) { GoogleSheetStockSource.downloadCsv() }
                 val result = repo.importCsv(csv)
                 val message = buildSyncMessage(result)
                 _syncStatus.value = message
                 if (showMessage) _operationMessage.value = message
+                Result.success(result)
             } catch (_: TimeoutCancellationException) {
                 val message = "Google Sheets no ha respondido a tiempo. Revisa la conexión y vuelve a sincronizar."
                 _syncStatus.value = "Sin sincronizar: $message"
                 if (showMessage) _operationMessage.value = message
+                Result.failure(IllegalStateException(message))
             } catch (error: Throwable) {
                 val message = error.message ?: "No se pudo sincronizar Google Sheets"
                 _syncStatus.value = "Sin sincronizar: $message"
                 if (showMessage) _operationMessage.value = message
+                Result.failure(error)
             } finally {
                 _syncBusy.value = false
             }
@@ -123,7 +139,8 @@ class SgaViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private fun buildSyncMessage(result: CsvImportResult): String = buildString {
-        append("Google Sheets: ${result.imported} nuevos, ${result.updated} actualizados")
+        append("Google Sheets: ${result.referencesRead} referencias leídas")
+        append(" · ${result.imported} nuevas · ${result.updated} actualizadas")
         if (result.errors.isNotEmpty()) {
             append(". Avisos: ")
             append(result.errors.take(3).joinToString(" | "))
@@ -241,13 +258,24 @@ class SgaViewModel(application: Application) : AndroidViewModel(application) {
     fun createNote(onCreated: (Long) -> Unit) {
         val current = _draft.value ?: return
         viewModelScope.launch {
+            // Siempre refresca el maestro justo antes de validar las referencias. Esto es
+            // especialmente importante cuando se acaba de añadir un código nuevo a Sheets.
+            _operationMessage.value = "Actualizando referencias desde Google Sheets…"
+            val syncAttempt = performGoogleSheetSync(showMessage = false)
+
             try {
                 val id = repo.createDeliveryNote(current)
                 _draft.value = null
+                _operationMessage.value = null
                 loadPicking(id)
                 onCreated(id)
             } catch (error: Throwable) {
-                _operationMessage.value = error.message ?: "No se pudo crear el albarán"
+                val base = error.message ?: "No se pudo crear el albarán"
+                _operationMessage.value = if (syncAttempt.isFailure) {
+                    "$base\n\nAdemás, no se pudo actualizar Google Sheets: ${syncAttempt.exceptionOrNull()?.message ?: "error de sincronización"}."
+                } else {
+                    base
+                }
             }
         }
     }

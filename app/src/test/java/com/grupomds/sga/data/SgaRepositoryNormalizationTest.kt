@@ -20,6 +20,13 @@ class SgaRepositoryNormalizationTest {
     }
 
     @Test
+    fun normalizesPrmt1vmpEvenWithInvisibleSheetCharacters() {
+        assertEquals("PRMT1VMP", SgaRepository.normalizeReference("\uFEFF PRMT1VMP\u00A0"))
+        assertEquals("PRMT1VMP", SgaRepository.normalizeReference("PRMT\u200B1VMP"))
+        assertEquals("PRMT1VMP", SgaRepository.normalizeReference("'PRMT1VMP'"))
+    }
+
+    @Test
     fun normalizesTransportBarcodeWithoutDestroyingTrackingSeparators() {
         assertEquals("1z-abc/123.45", SgaRepository.normalizeTransportBarcode(" 1z-abc/123.45 "))
     }

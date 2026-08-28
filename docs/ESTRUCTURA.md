@@ -1,4 +1,4 @@
-# Estructura del proyecto SGA MDS 1.3.0
+# Estructura del proyecto SGA MDS 1.3.1
 
 ```text
 SGA_MDS_GitHub_Ready_v3/

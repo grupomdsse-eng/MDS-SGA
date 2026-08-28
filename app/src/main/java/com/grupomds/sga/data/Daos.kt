@@ -15,7 +15,7 @@ interface ProductDao {
     @Query("SELECT * FROM products WHERE active = 1 ORDER BY reference COLLATE NOCASE")
     suspend fun getAll(): List<ProductEntity>
 
-    @Query("SELECT * FROM products WHERE reference = :reference LIMIT 1")
+    @Query("SELECT * FROM products WHERE reference = :reference COLLATE NOCASE LIMIT 1")
     suspend fun byReference(reference: String): ProductEntity?
 
     @Query("SELECT * FROM products WHERE ean = :ean LIMIT 1")
@@ -32,6 +32,9 @@ interface ProductDao {
 
     @Query("UPDATE products SET ean = :ean, updatedAt = :updatedAt WHERE reference = :reference")
     suspend fun assignEan(reference: String, ean: String, updatedAt: Long = System.currentTimeMillis()): Int
+
+    @Query("UPDATE products SET ean = NULL, updatedAt = :updatedAt WHERE reference = :reference")
+    suspend fun clearEan(reference: String, updatedAt: Long = System.currentTimeMillis()): Int
 }
 
 @Dao

@@ -1,4 +1,4 @@
-SGA MDS - VERSION 1.3.0 - GOOGLE SHEETS + PICKING + TRANSPORTE
+SGA MDS - VERSION 1.3.1 - GOOGLE SHEETS + PICKING + TRANSPORTE
 ===============================================================
 
 NOVEDADES PRINCIPALES

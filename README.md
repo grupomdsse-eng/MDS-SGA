@@ -1,4 +1,9 @@
-# SGA MDS — Android 1.3.0
+# SGA MDS — Android 1.3.1
+
+
+## Corrección 1.3.1: referencias nuevas de Google Sheets
+
+Antes de crear un albarán, la app fuerza una sincronización del maestro y espera a que termine. Además, las referencias se normalizan eliminando caracteres invisibles que puede introducir Google Sheets/Excel. El caso `PRMT1VMP` está cubierto por una prueba de regresión.
 
 Aplicación Android nativa para gestión de almacén, OCR de albaranes, picking mediante EAN y cierre de expediciones con etiquetas de transporte.
 
@@ -60,7 +65,7 @@ EAN: 8430000000001
 
 el picking solo acepta `8430000000001` para esa referencia.
 
-La versión 1.3.0 **no autoasigna EAN desconocidos** al escanear, porque eso podría relacionar un código de barras incorrecto con un artículo.
+La versión 1.3.1 **no autoasigna EAN desconocidos** al escanear, porque eso podría relacionar un código de barras incorrecto con un artículo.
 
 ## Unidades manuales
 
@@ -155,12 +160,12 @@ El workflow está en:
 
 `.github/workflows/build-apk.yml`
 
-En GitHub entra en **Actions → Build Android APK → Run workflow**. Ejecuta tests y compila `app-debug.apk`, que se publica como artefacto `SGA-MDS-1.3.0-debug-apk`.
+En GitHub entra en **Actions → Build Android APK → Run workflow**. Ejecuta tests y compila `app-debug.apk`, que se publica como artefacto `SGA-MDS-1.3.1-debug-apk`.
 
 ## Versiones
 
-- `versionCode = 4`
-- `versionName = 1.3.0`
+- `versionCode = 5`
+- `versionName = 1.3.1`
 - `minSdk = 26`
 - `targetSdk = 35`
 - Java 17

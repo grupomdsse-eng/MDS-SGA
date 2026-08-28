@@ -16,7 +16,10 @@ object GoogleSheetStockSource {
 
     suspend fun downloadCsv(): String = withContext(Dispatchers.IO) {
         val errors = mutableListOf<String>()
-        for (url in listOf(CSV_URL, GVIZ_CSV_URL)) {
+        val cacheBuster = System.currentTimeMillis()
+        for (baseUrl in listOf(CSV_URL, GVIZ_CSV_URL)) {
+            val separator = if (baseUrl.contains("?")) "&" else "?"
+            val url = "$baseUrl${separator}_ts=$cacheBuster"
             try {
                 return@withContext download(url)
             } catch (error: Throwable) {
@@ -36,7 +39,9 @@ object GoogleSheetStockSource {
             instanceFollowRedirects = true
             useCaches = false
             setRequestProperty("Accept", "text/csv,text/plain,*/*")
-            setRequestProperty("User-Agent", "SGA-MDS-Android/1.3")
+            setRequestProperty("User-Agent", "SGA-MDS-Android/1.3.1")
+            setRequestProperty("Cache-Control", "no-cache, no-store, max-age=0")
+            setRequestProperty("Pragma", "no-cache")
         }
 
         try {

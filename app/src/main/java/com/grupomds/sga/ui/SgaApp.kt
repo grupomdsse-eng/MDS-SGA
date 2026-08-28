@@ -78,6 +78,7 @@ import com.grupomds.sga.BuildConfig
 import com.grupomds.sga.data.DeliveryNoteEntity
 import com.grupomds.sga.data.ProductEntity
 import com.grupomds.sga.data.ProductScanCandidate
+import com.grupomds.sga.data.SgaRepository
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -643,7 +644,15 @@ private fun createPhotoUri(context: Context): Uri {
 private fun ReviewDeliveryNoteScreen(vm: SgaViewModel, nav: NavHostController) {
     val draft by vm.draft.collectAsStateWithLifecycle()
     val products by vm.products.collectAsStateWithLifecycle()
+    val syncBusy by vm.syncBusy.collectAsStateWithLifecycle()
+    val syncStatus by vm.syncStatus.collectAsStateWithLifecycle()
     val current = draft
+
+    // Refresca el maestro también al entrar en la revisión. Si un código se acaba de añadir
+    // al Google Sheet, aparecerá relacionado sin tener que reiniciar la aplicación.
+    LaunchedEffect(Unit) {
+        vm.syncStockFromGoogleSheet(showMessage = false)
+    }
 
     if (current == null) {
         Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
@@ -699,14 +708,30 @@ private fun ReviewDeliveryNoteScreen(vm: SgaViewModel, nav: NavHostController) {
             }
         }
 
+        item {
+            if (syncBusy) {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+                    Text("Actualizando referencias de Google Sheets…", style = MaterialTheme.typography.bodySmall)
+                }
+            } else if (!syncStatus.isNullOrBlank()) {
+                Text(syncStatus.orEmpty(), style = MaterialTheme.typography.bodySmall)
+            }
+        }
+
         itemsIndexed(current.lines) { index, line ->
+            val lineKey = SgaRepository.normalizeReference(line.reference)
             val matched = products.firstOrNull { product ->
-                product.reference.equals(line.reference.replace(" ", ""), ignoreCase = true)
+                SgaRepository.normalizeReference(product.reference) == lineKey
             }
             Card(Modifier.fillMaxWidth()) {
                 Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text(
-                        text = if (matched != null) "Código relacionado con Google Sheets" else "Revisar código: no aparece en inventario",
+                        text = when {
+                            matched != null -> "Código relacionado con Google Sheets"
+                            syncBusy -> "Comprobando código en Google Sheets…"
+                            else -> "Revisar código: no aparece en inventario"
+                        },
                         color = if (matched != null) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.secondary,
                         style = MaterialTheme.typography.labelMedium,
                         fontWeight = FontWeight.Bold

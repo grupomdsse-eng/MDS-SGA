@@ -24,7 +24,9 @@ sealed class FinalizeResult {
 data class CsvImportResult(
     val imported: Int,
     val updated: Int,
-    val errors: List<String>
+    val errors: List<String>,
+    val rowsRead: Int = 0,
+    val referencesRead: Int = 0
 )
 
 class SgaRepository(private val db: SgaDatabase) {
@@ -394,27 +396,29 @@ class SgaRepository(private val db: SgaDatabase) {
 
     /**
      * Importa/sincroniza CÓDIGO, EAN, descripción y stock desde CSV.
-     * El stock leído de la hoja se guarda en sheetStock. Las salidas hechas en el SGA se
-     * conservan como diferencia local, para que una sincronización no "deshaga" el picking.
+     *
+     * v1.3.1: el CSV se interpreta como documento RFC-4180 completo (incluidos saltos de
+     * línea dentro de celdas), se toleran espacios invisibles/BOM en las referencias y una
+     * fila ya no se descarta entera por un stock mal formateado. Esto evita que una referencia
+     * que sí existe en Google Sheets aparezca como inexistente en el SGA.
      */
     suspend fun importCsv(text: String): CsvImportResult = db.withTransaction {
-        val rows = text
-            .removePrefix("\uFEFF")
-            .lineSequence()
-            .map { it.trimEnd('\r') }
-            .filter { it.isNotBlank() }
-            .toList()
+        val cleanText = text.removePrefix("\uFEFF")
+        if (cleanText.isBlank()) {
+            return@withTransaction CsvImportResult(0, 0, listOf("El archivo está vacío"))
+        }
 
-        if (rows.isEmpty()) return@withTransaction CsvImportResult(0, 0, listOf("El archivo está vacío"))
+        val delimiter = detectDelimiter(firstCsvRecord(cleanText))
+        val rows = parseCsvDocument(cleanText, delimiter)
+            .filter { row -> row.any { it.isNotBlank() } }
 
-        val delimiter = detectDelimiter(rows.first())
-        val header = parseCsvRow(rows.first(), delimiter).map(::normalizeHeader)
+        if (rows.isEmpty()) {
+            return@withTransaction CsvImportResult(0, 0, listOf("El archivo está vacío"))
+        }
 
-        val refIndex = findColumn(header, "referencia", "codigo", "articulo", "reference", "sku", "code")
-        val eanIndex = findColumn(
-            header,
-            "ean", "ean13", "ean_13", "barcode", "codigo_barras", "codigo_de_barras", "codigobarras", "gtin", "gtin13", "codigo_ean"
-        )
+        val header = rows.first().map(::normalizeHeader)
+        val refIndex = findReferenceColumn(header)
+        val eanIndex = findEanColumn(header)
         val descIndex = findColumn(header, "descripcion", "description", "nombre", "producto", "product")
         val stockIndex = findColumn(header, "stock", "existencias", "unidades", "cantidad", "qty", "stock_actual", "disponible")
         val locationIndex = findColumn(header, "ubicacion", "location", "pasillo", "hueco", "almacen")
@@ -423,60 +427,91 @@ class SgaRepository(private val db: SgaDatabase) {
             return@withTransaction CsvImportResult(
                 imported = 0,
                 updated = 0,
-                errors = listOf("No encuentro la columna de referencia. Debe llamarse CÓDIGO, REFERENCIA o ARTÍCULO.")
+                errors = listOf("No encuentro la columna de referencia. Debe contener CÓDIGO, REFERENCIA, ARTÍCULO o SKU."),
+                rowsRead = (rows.size - 1).coerceAtLeast(0)
             )
         }
         if (eanIndex < 0) {
             return@withTransaction CsvImportResult(
                 imported = 0,
                 updated = 0,
-                errors = listOf("No encuentro la columna EAN/código de barras. Sin ella no se puede relacionar el picking con los artículos.")
+                errors = listOf("No encuentro la columna EAN/código de barras. Sin ella no se puede relacionar el picking con los artículos."),
+                rowsRead = (rows.size - 1).coerceAtLeast(0)
             )
         }
         if (stockIndex < 0) {
             return@withTransaction CsvImportResult(
                 imported = 0,
                 updated = 0,
-                errors = listOf("No encuentro la columna STOCK/EXISTENCIAS. El stock debe proceder de Google Sheets.")
+                errors = listOf("No encuentro la columna STOCK/EXISTENCIAS. El stock debe proceder de Google Sheets."),
+                rowsRead = (rows.size - 1).coerceAtLeast(0)
             )
         }
+
+        val dataRows = rows.drop(1)
+        fun valueAt(row: List<String>, columnIndex: Int): String =
+            if (columnIndex in row.indices) row[columnIndex].trim() else ""
+
+        // Se conoce de antemano qué referencias existen en la hoja. Así, si un EAN pertenecía
+        // localmente a una referencia antigua que ya no está en Sheets, puede reasignarse sin
+        // descartar el nuevo artículo.
+        val sheetReferences = dataRows
+            .mapNotNull { row -> normalizeReference(valueAt(row, refIndex)).takeIf(String::isNotBlank) }
+            .toSet()
 
         var imported = 0
         var updated = 0
         val errors = mutableListOf<String>()
+        val eanSeenInSheet = mutableMapOf<String, String>()
 
-        rows.drop(1).forEachIndexed { index, row ->
+        dataRows.forEachIndexed { index, row ->
             val lineNumber = index + 2
-            val columns = parseCsvRow(row, delimiter)
-            fun valueAt(columnIndex: Int): String = if (columnIndex in columns.indices) columns[columnIndex].trim() else ""
-
-            val reference = normalizeReference(valueAt(refIndex))
+            val reference = normalizeReference(valueAt(row, refIndex))
             if (reference.isBlank()) return@forEachIndexed
 
-            val ean = normalizeBarcode(valueAt(eanIndex)).takeIf { it.isNotBlank() }
             val existing = products.byReference(reference)
-
-            if (ean == null && existing?.ean.isNullOrBlank()) {
-                errors += "Fila $lineNumber ($reference): sin EAN; no podrá picarse hasta configurarlo"
-            }
+            var ean = normalizeBarcode(valueAt(row, eanIndex)).takeIf { it.isNotBlank() }
 
             if (ean != null) {
-                val owner = products.byEan(ean)
-                if (owner != null && owner.reference != reference) {
-                    errors += "Fila $lineNumber ($reference): EAN $ean ya usado por ${owner.reference}"
-                    return@forEachIndexed
+                val previousSheetOwner = eanSeenInSheet[ean]
+                if (previousSheetOwner != null && previousSheetOwner != reference) {
+                    errors += "Fila $lineNumber ($reference): EAN $ean duplicado también en $previousSheetOwner. Se importa la referencia, pero hay que corregir el EAN en Google Sheets."
+                    ean = null
+                } else {
+                    eanSeenInSheet[ean] = reference
                 }
             }
 
-            val incomingStockRaw = if (stockIndex >= 0) valueAt(stockIndex) else ""
-            val incomingSheetStock = if (stockIndex >= 0) parseStock(incomingStockRaw) else null
-            if (stockIndex >= 0 && incomingStockRaw.isNotBlank() && incomingSheetStock == null) {
-                errors += "Fila $lineNumber ($reference): stock no válido '$incomingStockRaw'"
-                return@forEachIndexed
+            if (ean != null) {
+                val localOwner = products.byEan(ean)
+                if (localOwner != null && localOwner.reference != reference) {
+                    if (localOwner.reference !in sheetReferences) {
+                        products.clearEan(localOwner.reference)
+                        errors += "Fila $lineNumber ($reference): EAN $ean reasignado desde la referencia antigua ${localOwner.reference}."
+                    } else {
+                        errors += "Fila $lineNumber ($reference): EAN $ean ya pertenece a ${localOwner.reference}. Se importa la referencia, pero sin cambiar ese EAN hasta corregir la hoja."
+                        ean = null
+                    }
+                }
             }
-            if (incomingSheetStock != null && incomingSheetStock < 0) {
-                errors += "Fila $lineNumber ($reference): stock negativo no permitido"
-                return@forEachIndexed
+
+            if (ean == null && existing?.ean.isNullOrBlank()) {
+                errors += "Fila $lineNumber ($reference): sin EAN válido; la referencia sí se ha importado, pero no podrá picarse hasta tener EAN."
+            }
+
+            val incomingStockRaw = valueAt(row, stockIndex)
+            val parsedSheetStock = parseStock(incomingStockRaw)
+            val incomingSheetStock = when {
+                incomingStockRaw.isBlank() -> existing?.sheetStock
+                parsedSheetStock == null -> {
+                    errors += "Fila $lineNumber ($reference): stock no válido '$incomingStockRaw'. Se mantiene el stock anterior, pero la referencia sí se importa."
+                    existing?.sheetStock
+                }
+                parsedSheetStock < 0 -> {
+                    errors += "Fila $lineNumber ($reference): stock negativo no permitido. Se mantiene el stock anterior, pero la referencia sí se importa."
+                    existing?.sheetStock
+                }
+                else -> parsedSheetStock
             }
 
             val localDelta = if (existing != null && existing.sheetStock != null) {
@@ -484,6 +519,7 @@ class SgaRepository(private val db: SgaDatabase) {
             } else {
                 0
             }
+
             val calculatedStock = when {
                 incomingSheetStock != null -> incomingSheetStock + localDelta
                 existing != null -> existing.stock
@@ -491,11 +527,11 @@ class SgaRepository(private val db: SgaDatabase) {
             }
             val effectiveStock = calculatedStock.coerceAtLeast(0)
             if (calculatedStock < 0) {
-                errors += "Fila $lineNumber ($reference): las salidas locales superan el stock de la hoja; stock SGA ajustado a 0"
+                errors += "Fila $lineNumber ($reference): las salidas locales superan el stock de la hoja; stock SGA ajustado a 0."
             }
 
-            val descriptionFromSheet = if (descIndex >= 0) valueAt(descIndex) else ""
-            val locationFromSheet = if (locationIndex >= 0) valueAt(locationIndex) else ""
+            val descriptionFromSheet = if (descIndex >= 0) valueAt(row, descIndex) else ""
+            val locationFromSheet = if (locationIndex >= 0) valueAt(row, locationIndex) else ""
             val description = descriptionFromSheet.ifBlank { existing?.description ?: "Producto $reference" }
             val location = locationFromSheet.ifBlank { existing?.location.orEmpty() }
             val now = System.currentTimeMillis()
@@ -506,7 +542,7 @@ class SgaRepository(private val db: SgaDatabase) {
                 description = description,
                 stock = effectiveStock,
                 location = location,
-                active = existing?.active ?: true,
+                active = true,
                 updatedAt = now,
                 sheetStock = incomingSheetStock ?: existing?.sheetStock
             )
@@ -541,17 +577,39 @@ class SgaRepository(private val db: SgaDatabase) {
             }
         }
 
-        CsvImportResult(imported, updated, errors)
+        CsvImportResult(
+            imported = imported,
+            updated = updated,
+            errors = errors,
+            rowsRead = dataRows.size,
+            referencesRead = sheetReferences.size
+        )
     }
 
     companion object {
-        fun normalizeReference(value: String): String = value
-            .trim()
-            .uppercase()
-            .replace(Regex("\\s+"), "")
+        /**
+         * Normalización pensada tanto para Google Sheets como para OCR/entrada manual.
+         * Elimina BOM, NBSP, espacios de ancho cero, comillas y signos ajenos al código.
+         */
+        fun normalizeReference(value: String): String {
+            val normalized = Normalizer.normalize(value, Normalizer.Form.NFKC)
+                .trim()
+                .trim('"', '\'', '`')
+                .uppercase()
+                .replace("\uFEFF", "")
+                .replace("\u200B", "")
+                .replace("\u200C", "")
+                .replace("\u200D", "")
+
+            return normalized.filter { char ->
+                char.isLetterOrDigit() || char == '-' || char == '_' || char == '/' || char == '.'
+            }
+        }
 
         fun normalizeBarcode(value: String): String {
-            var cleaned = value.trim().trim('"', '\'', ' ')
+            var cleaned = Normalizer.normalize(value, Normalizer.Form.NFKC)
+                .trim()
+                .trim('"', '\'', ' ')
             if (cleaned.isBlank()) return ""
 
             if (cleaned.contains('E', ignoreCase = true)) {
@@ -578,52 +636,153 @@ class SgaRepository(private val db: SgaDatabase) {
             .take(500)
 
         private fun parseStock(value: String): Int? {
-            val normalized = value.trim().replace(" ", "").replace(',', '.')
+            val normalized = value
+                .replace("\u00A0", "")
+                .replace(" ", "")
+                .trim()
+                .replace(',', '.')
             if (normalized.isBlank()) return null
             return normalized.toDoubleOrNull()?.toInt()
         }
 
+        private fun firstCsvRecord(text: String): String {
+            val result = StringBuilder()
+            var quoted = false
+            var index = 0
+            while (index < text.length) {
+                val char = text[index]
+                if (char == '"') {
+                    if (quoted && index + 1 < text.length && text[index + 1] == '"') {
+                        result.append("\"\"")
+                        index += 2
+                        continue
+                    }
+                    quoted = !quoted
+                    result.append(char)
+                } else if ((char == '\n' || char == '\r') && !quoted) {
+                    break
+                } else {
+                    result.append(char)
+                }
+                index++
+            }
+            return result.toString()
+        }
+
         private fun detectDelimiter(header: String): Char {
-            val candidates = listOf(';', '\t', ',')
-            return candidates.maxByOrNull { delimiter -> header.count { it == delimiter } } ?: ';'
+            val candidates = listOf(',', ';', '\t')
+            return candidates.maxByOrNull { delimiter -> countDelimiterOutsideQuotes(header, delimiter) } ?: ','
+        }
+
+        private fun countDelimiterOutsideQuotes(text: String, delimiter: Char): Int {
+            var count = 0
+            var quoted = false
+            var index = 0
+            while (index < text.length) {
+                val char = text[index]
+                if (char == '"') {
+                    if (quoted && index + 1 < text.length && text[index + 1] == '"') {
+                        index += 2
+                        continue
+                    }
+                    quoted = !quoted
+                } else if (char == delimiter && !quoted) {
+                    count++
+                }
+                index++
+            }
+            return count
+        }
+
+        private fun findReferenceColumn(header: List<String>): Int {
+            val exact = findColumn(header, "referencia", "codigo", "articulo", "reference", "sku", "code")
+            if (exact >= 0) return exact
+
+            return header.indexOfFirst { column ->
+                when {
+                    column.contains("codigo_de_barras") || column.contains("codigo_barras") || column.contains("barcode") || column.contains("ean") || column.contains("gtin") -> false
+                    column.contains("referencia") -> true
+                    column.contains("articulo") -> true
+                    column == "sku" || column.startsWith("sku_") || column.endsWith("_sku") -> true
+                    column == "codigo" || column.startsWith("codigo_producto") || column.startsWith("codigo_articulo") -> true
+                    else -> false
+                }
+            }
+        }
+
+        private fun findEanColumn(header: List<String>): Int {
+            val exact = findColumn(
+                header,
+                "ean", "ean13", "ean_13", "barcode", "codigo_barras", "codigo_de_barras", "codigobarras", "gtin", "gtin13", "codigo_ean"
+            )
+            if (exact >= 0) return exact
+
+            return header.indexOfFirst { column ->
+                column.contains("ean") || column.contains("gtin") || column.contains("barcode") ||
+                    column.contains("codigo_de_barras") || column.contains("codigo_barras")
+            }
         }
 
         private fun findColumn(header: List<String>, vararg names: String): Int {
-            val accepted = names.toSet()
-            return header.indexOfFirst { it in accepted }
+            val accepted = names.map(::normalizeHeader).toSet()
+            val exact = header.indexOfFirst { it in accepted }
+            if (exact >= 0) return exact
+
+            return header.indexOfFirst { column ->
+                accepted.any { name ->
+                    column.startsWith("${name}_") || column.endsWith("_$name") || column.contains("_${name}_")
+                }
+            }
         }
 
         private fun normalizeHeader(value: String): String {
             val noAccents = Normalizer.normalize(value.trim().lowercase(), Normalizer.Form.NFD)
                 .replace(Regex("\\p{Mn}+"), "")
             return noAccents
+                .replace("\uFEFF", "")
                 .replace(Regex("[^a-z0-9]+"), "_")
                 .trim('_')
         }
 
-        private fun parseCsvRow(row: String, delimiter: Char): List<String> {
-            val result = mutableListOf<String>()
-            val current = StringBuilder()
+        /** Parser CSV que soporta comas/punto y coma, comillas escapadas y saltos de línea dentro de celdas. */
+        private fun parseCsvDocument(text: String, delimiter: Char): List<List<String>> {
+            val rows = mutableListOf<MutableList<String>>()
+            var row = mutableListOf<String>()
+            val cell = StringBuilder()
             var quoted = false
             var index = 0
-            while (index < row.length) {
-                val char = row[index]
+
+            fun finishCell() {
+                row += cell.toString()
+                cell.clear()
+            }
+
+            fun finishRow() {
+                finishCell()
+                rows += row
+                row = mutableListOf()
+            }
+
+            while (index < text.length) {
+                val char = text[index]
                 when {
-                    char == '"' && quoted && index + 1 < row.length && row[index + 1] == '"' -> {
-                        current.append('"')
+                    char == '"' && quoted && index + 1 < text.length && text[index + 1] == '"' -> {
+                        cell.append('"')
                         index++
                     }
                     char == '"' -> quoted = !quoted
-                    char == delimiter && !quoted -> {
-                        result += current.toString()
-                        current.clear()
+                    char == delimiter && !quoted -> finishCell()
+                    (char == '\n' || char == '\r') && !quoted -> {
+                        if (char == '\r' && index + 1 < text.length && text[index + 1] == '\n') index++
+                        finishRow()
                     }
-                    else -> current.append(char)
+                    else -> cell.append(char)
                 }
                 index++
             }
-            result += current.toString()
-            return result
+
+            if (cell.isNotEmpty() || row.isNotEmpty()) finishRow()
+            return rows
         }
     }
 }
